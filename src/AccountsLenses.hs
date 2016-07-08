@@ -4,7 +4,7 @@ module AccountsLenses where
 
 import Accounts
 import Data.Maybe
-import Data.ByteString hiding (head)
+import Data.ByteString.Char8 hiding (head)
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.FromRow
 import Database.PostgreSQL.Simple.FromField
@@ -46,6 +46,9 @@ account_aid = IOLens
 
 -- account kind 
 
+account_kind_get :: AccountRow -> String
+account_kind_get (AccountRow _ (AccountKind kind) _ _) = unpack kind
+
 account_kind_set :: AccountRow -> String -> Connection -> IO AccountRow
 account_kind_set row val conn = do
     let update_query = "UPDATE accounts SET kind = ? WHERE aid = ? RETURNING aid, kind, name, description;"
@@ -53,7 +56,7 @@ account_kind_set row val conn = do
     return (head new_row)
 
 account_kind = IOLens
-    (\row -> show (_account_kind row))
+    account_kind_get
     (Just account_kind_set)
     "kind"
 
