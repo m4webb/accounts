@@ -11,7 +11,7 @@ import Database.PostgreSQL.Simple.FromField
 
 -- account_kind data type
 
-newtype AccountKind = AccountKind ByteString deriving (Show)
+newtype AccountKind = AccountKind ByteString
 
 instance FromField AccountKind where
    fromField f mdata = do
@@ -30,7 +30,6 @@ data AccountRow = AccountRow {
     _account_name :: String,
     _account_description :: Maybe String
     }
-    deriving (Show)
 
 instance FromRow AccountRow where
    fromRow = AccountRow <$> field <*> field <*> field <*> field
