@@ -1,90 +1,65 @@
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module Accounts where
 
 import Database.PostgreSQL.Simple
+import Data.List.Zipper
 import Control.Lens
 
-class I1 a where
-    i1_select :: a -> IO a
-    --i1_update :: a -> String -> IO a
-    --i1_insert :: a -> IO a
-    --i1_delete :: a -> IO a
-    --i1_up :: a -> a
-    --i1_down :: a -> a
-    --i1_left :: a -> a
-    --i1_right :: a -> a
+-- Accounts core API
+
+-- AccLens - Accounts Lens
+
+data AccLens row = AccLens {
+    _alens_get :: row -> String,
+    _alens_set :: Maybe (row -> String -> row),
+    _alens_name :: String
+    }
+
+makeLenses ''AccLens
+
+-- I1 - Interface 1
+
+data I1 a = I1 {
+    _i1_select :: a -> IO a,
+    _i1_insert :: a -> IO a,
+    _i1_update :: a -> String -> IO a,
+    _i1_delete :: a -> IO a,
+    _i1_up :: a -> a,
+    _i1_down :: a -> a,
+    _i1_left :: a -> a,
+    _i1_right :: a -> a
+    }
+
+makeLenses ''I1
+
+-- LO1 - Logical Object 1
 
 data LO1 row = LO1 {
-    _lo1_zl_row :: (ZipList row),
-    _lo1_zl_lens :: (ZipList (IOLens row))
+    _lo1_zip_row :: Zipper row,
+    _lo1_zip_lens :: Zipper (AccLens row)
     }
-
---lo1_set_zl_row lo1 zl_row = lo1 {lo1_zl_row = zl_row}
---lo1_set_zl_lens lo1 zl_lens = lo1 {lo1_zl_lens = zl_lens}
-
-class I1 a => ILO1 a row where
-    ilo1_state :: a -> LO1 row
-
--- lens has field-level scope, selector has row-level scope
-    
-data IOLens row = IOLens {
-    lens_get :: row -> String,
-    lens_set :: Maybe (row -> String -> Connection -> IO row),
-    lens_name :: String
-    }
-
-lens_get_get = lens_get
-lens_get_set = lens_set
-lens_get_name = lens_name
-
-instance Show (IOLens row) where
-    show lens = "IOLens " ++ (lens_name lens)
-
-data IOSelector row = IOSelector {
-    ios_select :: Connection -> IO [row],
-    ios_insert :: Connection -> IO row,
-    ios_delete :: Connection -> row -> IO ()
-    }
-
-instance Show (IOSelector row) where
-    show selector = "IOSelector"
-
--- ZipList
-
-data ZipList a = ZipList {
-    zl_item:: a,
-    zl_before :: [a],
-    zl_after :: [a]
-    }
-
-zl_get_item = zl_item
-zl_get_before = zl_before
-zl_get_after = zl_after
-zl_set_item zl item = zl {zl_item = item}
-zl_set_before zl before = zl {zl_before = before}
-zl_set_after zl after = zl {zl_after = after}
-
-zl_up :: ZipList a -> ZipList a
-zl_up (ZipList curr_item (prev_item:before) after) = ZipList prev_item before (curr_item:after)
-zl_up (ZipList curr_item [] after) = ZipList curr_item [] after
-
-zl_down :: ZipList a -> ZipList a
-zl_down (ZipList curr_item before (next_item:after)) = ZipList next_item (curr_item:before) after
-zl_down (ZipList curr_item before []) = ZipList curr_item before []
-
-zl_unzip :: ZipList a -> ZipList a
-zl_unzip (ZipList item before []) = ZipList item before []
-zl_unzip ziplist = zl_unzip $ zl_down ziplist
-
-zl_rezip :: ZipList a -> ZipList a
-zl_rezip (ZipList item [] after) = ZipList item [] after
-zl_rezip ziplist = zl_rezip $ zl_up ziplist
-
-zl_append :: ZipList a -> a -> ZipList a
-zl_append ziplist new_item = ZipList new_item (item:before) []
-    where ZipList item before [] = zl_unzip ziplist
 
 makeLenses ''LO1
 
+-- ILO1 - Interactive Logical Object 1
+
+data ILO1 a row = ILO1 {
+    _ilo1_interface :: I1 a,
+    _ilo1_state :: LO1 row
+    }
+
+makeLenses ''ILO1
+
+-- Implementation helps
+
+-- IOSelector
+
+data IOSelector row = IOSelector {
+    _ios_select :: Connection -> IO [row],
+    _ios_insert :: Connection -> IO row,
+    _ios_update :: Connection -> row -> IO (),
+    _ios_delete :: Connection -> row -> IO ()
+    }
+
+makeLenses ''IOSelector
