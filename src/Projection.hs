@@ -21,18 +21,17 @@ proj_zip_lens = proj_lo1 . lo1_zip_lens
 
 -- implement I1
 
---projection_accounts_i1 = I1
---    projection_accounts_i1_select
---    projection_accounts_i1_insert
---    projection_accounts_i1_update
---    projection_accounts_i1_delete
---    projection_accounts_i1_up
---    projection_accounts_i1_down
---    projection_accounts_i1_left
---    projection_accounts_i1_right
+projection_accounts_i1 = I1
+    projection_accounts_i1_select
+    projection_accounts_i1_insert
+    projection_accounts_i1_update
+    projection_accounts_i1_delete
+    projection_accounts_i1_up
+    projection_accounts_i1_down
+    projection_accounts_i1_left
+    projection_accounts_i1_right
 
 projection_accounts_i1_select self = do
-    -- python: rows = self.ios.select(self.conn)
     rows <- (self ^. proj_ios) ^. ios_select $ (self ^. proj_conn)
     return $ self & proj_zip_row .~ (fromList rows)
 
@@ -57,7 +56,7 @@ projection_accounts_i1_update self value = do
                             ((self ^. proj_ios) ^. ios_update) (self ^. proj_conn) new_row
                             return $ self & proj_zip_row %~ replace new_row
 
-projection_accounts_i1_delete self value = do
+projection_accounts_i1_delete self = do
     let m_curr_row = safeCursor (self ^. (proj_lo1 . lo1_zip_row))
     case m_curr_row of
         Nothing -> return self
@@ -66,6 +65,9 @@ projection_accounts_i1_delete self value = do
             return $ self & proj_zip_row %~ pop
 
 projection_accounts_i1_up self = self & proj_zip_row %~ left
+
 projection_accounts_i1_down self = self & proj_zip_row %~ right
+
 projection_accounts_i1_left self = self & proj_zip_lens %~ left
+
 projection_accounts_i1_right self = self & proj_zip_lens %~ right 
