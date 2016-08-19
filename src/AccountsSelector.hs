@@ -62,7 +62,7 @@ account_selector :: IOSelector AccountRow
 account_selector = IOSelector account_select account_insert account_update account_delete
 
 account_select :: Connection -> IO [AccountRow]
-account_select conn = query_ conn "SELECT aid, kind, name, description FROM accounts;"
+account_select conn = query_ conn "SELECT aid, kind, name, description FROM accounts ORDER BY aid;"
 
 account_insert :: Connection -> IO AccountRow
 account_insert conn = do
@@ -73,7 +73,7 @@ account_insert conn = do
 account_update :: Connection -> AccountRow -> IO ()
 account_update conn row = do
     let query_string = "UPDATE accounts SET kind=?, name=?, description=? WHERE aid=?;"
-    res <- query conn query_string (row ^. account_kind, row ^. account_name, row ^. account_description, row ^. account_aid) :: IO [AccountRow]
+    execute conn query_string (row ^. account_kind, row ^. account_name, row ^. account_description, row ^. account_aid)
     return ()
 
 account_delete :: Connection -> AccountRow -> IO ()

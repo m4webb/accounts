@@ -37,7 +37,7 @@ projection_accounts_i1_select self = do
 
 projection_accounts_i1_insert self = do
     new_row <- (self ^. proj_ios) ^. ios_insert $ (self ^. proj_conn) 
-    return $ self & proj_zip_row %~ end . insert new_row
+    return $ self & proj_zip_row %~ (insert new_row . end)
 
 projection_accounts_i1_update self value = do
     let m_curr_row = safeCursor (self ^. (proj_lo1 . lo1_zip_row))
@@ -70,4 +70,4 @@ projection_accounts_i1_down self = self & proj_zip_row %~ right
 
 projection_accounts_i1_left self = self & proj_zip_lens %~ left
 
-projection_accounts_i1_right self = self & proj_zip_lens %~ right 
+projection_accounts_i1_right self = self & proj_zip_lens %~ right
