@@ -18,6 +18,10 @@ data AccLens row = AccLens {
 
 makeLenses ''AccLens
 
+instance Eq (AccLens row) where
+    (==) a b = (a ^. alens_name) == (b ^. alens_name)
+    (/=) a b = (a ^. alens_name) /= (b ^. alens_name)
+
 -- I1 - Interface 1
 
 data I1 a = I1 {
@@ -45,8 +49,8 @@ makeLenses ''LO1
 -- ILO1 - Interactive Logical Object 1
 
 data ILO1 a row = ILO1 {
-    _ilo1_interface :: I1 a,
-    _ilo1_state :: LO1 row
+    _ilo1_i1 :: I1 a,
+    _ilo1_lo1f :: a -> LO1 row
     }
 
 makeLenses ''ILO1
@@ -58,7 +62,7 @@ makeLenses ''ILO1
 data IOSelector row = IOSelector {
     _ios_select :: Connection -> IO [row],
     _ios_insert :: Connection -> IO row,
-    _ios_update :: Connection -> row -> IO (),
+    _ios_update :: Connection -> row -> IO row,
     _ios_delete :: Connection -> row -> IO ()
     }
 

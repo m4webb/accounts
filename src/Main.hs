@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Main where
 
@@ -6,48 +7,90 @@ import UI.NCurses
 import Database.PostgreSQL.Simple
 import Projection
 import Accounts
-import AccountsSelector
+import AccountSelector
+import TransactionSelector
 import Data.List.Zipper
 import Control.Lens
 import Control.Monad.IO.Class (liftIO)
+import Control.Exception
+import Data.ByteString.Char8 (unpack)
+
+
+data AppState a row = AppState {
+    _state_ilo1 :: ILO1 a row,
+    _state_ilo1_a :: a,
+    _state_w :: Window,
+    _state_colors :: ColorID,
+    _state_status :: String,
+    _stateStatusWindow :: Window,
+    _stateInputWindow :: Window
+    }
+
+makeLenses ''AppState
 
 main :: IO ()
 main = do
     conn <- connectPostgreSQL "dbname='accounts' user='matthew' password='matthew'"
-    let proj = Projection (LO1 (fromList []) (fromList account_alenses)) account_selector conn
-    proj <- (projection_accounts_i1 ^. i1_select) proj
+    let accountsProj = Projection (LO1 (fromList []) (fromList account_alenses)) account_selector conn
+    let transactionProj = Projection (LO1 (fromList []) (fromList transactionAlenses)) transactionSelector conn
+    -- proj <- (projection_accounts_i1 ^. i1_select) proj
     runCurses $ do
         setEcho False
         setCursorMode CursorInvisible
-        w <- defaultWindow
-        mainLoop w proj
-        --waitFor w (\ev -> ev == EventCharacter 'q' || ev == EventCharacter 'Q')
+        cid <- newColorID ColorRed ColorDefault 2
+        max_y <- fmap (fromInteger . fst) screenSize
+        max_x <- fmap (fromInteger . snd) screenSize
+        w <- newWindow (max_y - 4) (max_x - 2) 1 1
+        inputWindow <- newWindow 1 (max_x - 1) (max_y - 3) 1
+        statusWindow <- newWindow 1 (max_x - 1) (max_y - 2) 1
+        mainLoop (AppState projectionILO1 transactionProj w cid "Welcome" statusWindow inputWindow )
 
 -- algebraic data type for current view (this or that or...)
-mainLoop :: Window -> (Projection AccountRow) -> Curses ()
-mainLoop w p = do
-    drawLO1 w (p ^. proj_lo1)
+mainLoop :: AppState a row -> Curses ()
+mainLoop state = do
+    updateWindow (state ^. stateStatusWindow) $ do
+        clear
+        max_x <- fmap (fromInteger . snd) windowSize
+        drawStringPos (clipString (max_x-1) (state ^. state_status)) 0 0
+    updateWindow (state ^. stateInputWindow) $ do
+        clear
+    drawLO1 (state ^. state_w) ((state ^. state_ilo1 ^. ilo1_lo1f) (state ^. state_ilo1_a)) (state ^. state_colors)
     render
-    ev <- getEvent w Nothing
+    ev <- getEvent (state ^. state_w) Nothing
     case ev of
         Just (EventCharacter 'q') -> return ()
-        Just (EventCharacter 'j') -> mainLoop w ((projection_accounts_i1 ^. i1_down) p)
-        Just (EventCharacter 'k') -> mainLoop w ((projection_accounts_i1 ^. i1_up) p)
-        Just (EventCharacter 'h') -> mainLoop w ((projection_accounts_i1 ^. i1_left) p)
-        Just (EventCharacter 'l') -> mainLoop w ((projection_accounts_i1 ^. i1_right) p)
+        Just (EventCharacter 'k') -> mainLoop (state & state_ilo1_a %~ (state ^. state_ilo1 ^. ilo1_i1 ^. i1_up))
+        Just (EventCharacter 'j') -> mainLoop (state & state_ilo1_a %~ (state ^. state_ilo1 ^. ilo1_i1 ^. i1_down))
+        Just (EventCharacter 'h') -> mainLoop (state & state_ilo1_a %~ (state ^. state_ilo1 ^. ilo1_i1 ^. i1_left))
+        Just (EventCharacter 'l') -> mainLoop (state & state_ilo1_a %~ (state ^. state_ilo1 ^. ilo1_i1 ^. i1_right))
+        Just (EventCharacter 's') -> do
+            new_state <- liftIO (catch (do
+                    new_ilo1_a <- (state ^. state_ilo1 ^. ilo1_i1 ^. i1_select) (state ^. state_ilo1_a)
+                    return (state & state_ilo1_a .~ new_ilo1_a))
+                (\e -> do
+                    let err = show (e :: SqlError)
+                    return (state & state_status .~ (unpack $ sqlErrorMsg e))))
+            mainLoop new_state
         Just (EventCharacter 'i') -> do
-            new_p <- liftIO $ (projection_accounts_i1 ^. i1_insert) p
-            mainLoop w new_p
+            new_ilo1_a <- liftIO $ (state ^. state_ilo1 ^. ilo1_i1 ^. i1_insert) (state ^. state_ilo1_a)
+            mainLoop (state & state_ilo1_a .~ new_ilo1_a)
         Just (EventCharacter 'u') -> do
-            --(max_y, max_x) <- screenSize
-            max_y <- updateWindow w $ do
+            max_y <- updateWindow (state ^. state_w) $ do
                 max_y <- fmap (fromInteger . fst) windowSize
                 return max_y
-            update_str <- getString w "?" (max_y-1) 0
-            new_p <- liftIO $ (projection_accounts_i1 ^. i1_update) p update_str
-            mainLoop w new_p
-        _ -> mainLoop w p
-    
+            update_str <- getString (state ^. stateInputWindow) "?" 0 0
+            new_state <- liftIO (catch (do
+                    new_ilo1_a <- (state ^. state_ilo1 ^. ilo1_i1 ^. i1_update) (state ^. state_ilo1_a) update_str
+                    return (state & state_ilo1_a .~ new_ilo1_a))
+                (\e -> do
+                    let err = show (e :: SqlError)
+                    return (state & state_status .~ (unpack $ sqlErrorMsg e))))
+            mainLoop new_state
+        Just (EventCharacter 'd') -> do
+            new_ilo1_a <- liftIO $ (state ^. state_ilo1 ^. ilo1_i1 ^. i1_delete) (state ^. state_ilo1_a)
+            mainLoop (state & state_ilo1_a .~ new_ilo1_a)
+        Just (EventCharacter 'c') -> mainLoop (state & state_status .~ "")
+        _ -> mainLoop state
 
 waitFor :: Window -> (Event -> Bool) -> Curses ()
 waitFor w p = loop where
@@ -98,7 +141,7 @@ drawError = do
 
 inmap fns args = [f a | (f, a) <- zip fns args]
 
-maxLength = 15
+maxLength = 25
 
 clipString :: Int -> String -> String
 clipString size str = if (length str) > size then ((take (size - 3) str) ++ "...") else str
@@ -132,7 +175,7 @@ drawCross coords = do
     if coords == (0, 0) then drawGlyphPos glyphCornerUL coords
     else if coords == (0, max_x - 1) then drawGlyphPos glyphCornerUR coords
     else if coords == (max_y - 2, 0) then drawGlyphPos glyphCornerLL coords
-    else if coords == (max_y - 2, max_x-1) then drawGlyphPos glyphCornerLR coords
+    else if coords == (max_y - 2, max_x - 1) then drawGlyphPos glyphCornerLR coords
     else if fst coords == 0 then drawGlyphPos glyphTeeT coords
     else if fst coords == max_y - 2 then drawGlyphPos glyphTeeB coords
     else if snd coords == 0 then drawGlyphPos glyphTeeL coords
@@ -153,7 +196,7 @@ applyZipperY (Zip ls (curs:rs)) cursor_start max_y = Zip [fmaparg a r | (r, a) <
 applyZipperX z xs = fmap (\r -> [f x | (f, x) <- (zip r xs)]) z
 
 -- drawLO1 :: Show row => Window -> (LO1 row) -> Curses ()
-drawLO1 w lo1 = updateWindow w $ do
+drawLO1 w lo1 cid = updateWindow w $ do
     clear
     max_y <- fmap fst windowSize
     max_x <- fmap snd windowSize
@@ -182,9 +225,11 @@ drawLO1 w lo1 = updateWindow w $ do
             let q1 = fmap drawStringPos lens_strings
             let q2 = fmaparg ((quot max_y 2) - 1) q1
             let q3 = [f a | (f, a) <- (zip q2 strStarts)] 
-            foldl1 (>>) q3
-            foldl1 (>>) (toList (fmap (foldl1 (>>)) w4))
-            moveCursor 0 30
-            drawString $ case (safeCursor $ lo1 ^. lo1_zip_lens) of
-                Nothing -> "None"
-                Just s -> view alens_name s
+            foldl (>>) (return ()) q3
+            setColor cid
+            let qq0 = [(lens, x) | (lens, x) <- zip (toList $ lo1 ^. lo1_zip_lens) strStarts]
+            let qq1 = filter (\(lens, x) -> lens == (cursor (lo1 ^. lo1_zip_lens))) qq0
+            let qq2 = fmap (\(lens, x) -> drawStringPos (lens ^. alens_name) ((quot max_y 2) - 1) x) qq1
+            foldl (>>) (return ()) qq2
+            setColor defaultColorID
+            foldl (>>) (return ()) (toList (fmap (foldl (>>) (return ())) w4))
