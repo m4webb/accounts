@@ -27,7 +27,7 @@ instance Eq (AccLens row) where
 data I1 a = I1 {
     _i1_select :: a -> IO a,
     _i1_insert :: a -> IO a,
-    _i1_update :: a -> String -> IO a,
+    _i1_update :: String -> a -> IO a,
     _i1_delete :: a -> IO a,
     _i1_up :: a -> a,
     _i1_down :: a -> a,

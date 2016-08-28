@@ -42,7 +42,7 @@ projection_i1_insert self = do
     new_row <- (self ^. proj_ios) ^. ios_insert $ (self ^. proj_conn) 
     return $ self & proj_zip_row %~ (insert new_row . end)
 
-projection_i1_update self value = do
+projection_i1_update value self = do
     let m_curr_row = safeCursor (self ^. (proj_lo1 . lo1_zip_row))
     case m_curr_row of
         Nothing -> return self

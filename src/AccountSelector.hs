@@ -85,6 +85,7 @@ account_delete conn row = do
 -- AccLens
 
 account_alenses = [account_aid_alens, account_kind_alens, account_name_alens, account_description_alens]
+account_alenses_no_aid = [account_kind_alens, account_name_alens, account_description_alens]
 
 -- account aid alens
 

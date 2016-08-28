@@ -4,6 +4,7 @@
 module Main where
 
 import UI.NCurses
+import UI.NCurses.Types
 import Database.PostgreSQL.Simple
 import Projection
 import Accounts
@@ -12,85 +13,106 @@ import TransactionSelector
 import Data.List.Zipper
 import Control.Lens
 import Control.Monad.IO.Class (liftIO)
-import Control.Exception
 import Data.ByteString.Char8 (unpack)
+import Control.Monad.Catch
+import Control.Exception (throwIO)
 
+-- allow exceptions to be caught in Curses monad
 
-data AppState a row = AppState {
-    _state_ilo1 :: ILO1 a row,
-    _state_ilo1_a :: a,
-    _state_w :: Window,
-    _state_colors :: ColorID,
-    _state_status :: String,
-    _stateStatusWindow :: Window,
-    _stateInputWindow :: Window
+instance MonadThrow Curses where
+    throwM e = Curses (throwIO e)
+
+instance MonadCatch Curses where
+    catch (Curses a) handler = Curses $ catch a (\e -> unCurses (handler e))
+
+data CoreState = CoreState {
+    _coreMainWindow :: Window,
+    _coreStatusWindow :: Window,
+    _coreInputWindow :: Window,
+    _coreConnection :: Connection,
+    _coreColors :: ColorID,
+    _coreStatus :: String
     }
 
-makeLenses ''AppState
+makeLenses ''CoreState
+
+data SimpleProjectionApp a row = SimpleProjectionApp {
+    _spaILO1 :: ILO1 a row,
+    _spaA :: a
+    }
+
+makeLenses ''SimpleProjectionApp
+
+data BigState a row = BigState {
+    _coreState :: CoreState,
+    _appState :: SimpleProjectionApp a row
+    }
+
+makeLenses ''BigState
+
+accountsProj conn = Projection (LO1 (fromList []) (fromList account_alenses)) account_selector conn
+transactionsProj conn = Projection (LO1 (fromList []) (fromList transactionAlenses)) transactionSelector conn
 
 main :: IO ()
 main = do
     conn <- connectPostgreSQL "dbname='accounts' user='matthew' password='matthew'"
-    let accountsProj = Projection (LO1 (fromList []) (fromList account_alenses)) account_selector conn
-    let transactionProj = Projection (LO1 (fromList []) (fromList transactionAlenses)) transactionSelector conn
-    -- proj <- (projection_accounts_i1 ^. i1_select) proj
     runCurses $ do
         setEcho False
         setCursorMode CursorInvisible
-        cid <- newColorID ColorRed ColorDefault 2
+        colors <- newColorID ColorRed ColorDefault 2
         max_y <- fmap (fromInteger . fst) screenSize
         max_x <- fmap (fromInteger . snd) screenSize
-        w <- newWindow (max_y - 4) (max_x - 2) 1 1
+        mainWindow <- newWindow (max_y - 4) (max_x - 2) 1 1
         inputWindow <- newWindow 1 (max_x - 1) (max_y - 3) 1
         statusWindow <- newWindow 1 (max_x - 1) (max_y - 2) 1
-        mainLoop (AppState projectionILO1 transactionProj w cid "Welcome" statusWindow inputWindow )
+        let coreState = CoreState mainWindow statusWindow inputWindow conn colors "Welcome"
+        let appState = SimpleProjectionApp projectionILO1 (accountsProj conn)
+        let bigState = BigState coreState appState
+        mainLoop bigState
 
 -- algebraic data type for current view (this or that or...)
-mainLoop :: AppState a row -> Curses ()
+mainLoop :: BigState a row -> Curses ()
 mainLoop state = do
-    updateWindow (state ^. stateStatusWindow) $ do
+    updateWindow (state ^. coreState ^. coreStatusWindow) $ do
         clear
         max_x <- fmap (fromInteger . snd) windowSize
-        drawStringPos (clipString (max_x-1) (state ^. state_status)) 0 0
-    updateWindow (state ^. stateInputWindow) $ do
+        drawStringPos (clipString (max_x-1) (state ^. coreState ^. coreStatus)) 0 0
+    updateWindow (state ^. coreState ^. coreInputWindow) $ do
         clear
-    drawLO1 (state ^. state_w) ((state ^. state_ilo1 ^. ilo1_lo1f) (state ^. state_ilo1_a)) (state ^. state_colors)
+    drawLO1
+        (state ^. coreState ^. coreMainWindow)
+        ((state ^. appState ^. spaILO1 ^. ilo1_lo1f) (state ^. appState ^. spaA))
+        (state ^. coreState ^. coreColors)
     render
-    ev <- getEvent (state ^. state_w) Nothing
-    case ev of
+    event <- getEvent (state ^. coreState ^. coreMainWindow) Nothing
+    case event of
+        Just (EventCharacter '1') -> mainLoop (state & appState .~
+            (SimpleProjectionApp projectionILO1 (accountsProj (state ^. coreState ^. coreConnection))))
+        Just (EventCharacter '2') -> mainLoop (state & appState .~
+            (SimpleProjectionApp projectionILO1 (transactionsProj (state ^. coreState ^. coreConnection))))
         Just (EventCharacter 'q') -> return ()
-        Just (EventCharacter 'k') -> mainLoop (state & state_ilo1_a %~ (state ^. state_ilo1 ^. ilo1_i1 ^. i1_up))
-        Just (EventCharacter 'j') -> mainLoop (state & state_ilo1_a %~ (state ^. state_ilo1 ^. ilo1_i1 ^. i1_down))
-        Just (EventCharacter 'h') -> mainLoop (state & state_ilo1_a %~ (state ^. state_ilo1 ^. ilo1_i1 ^. i1_left))
-        Just (EventCharacter 'l') -> mainLoop (state & state_ilo1_a %~ (state ^. state_ilo1 ^. ilo1_i1 ^. i1_right))
-        Just (EventCharacter 's') -> do
-            new_state <- liftIO (catch (do
-                    new_ilo1_a <- (state ^. state_ilo1 ^. ilo1_i1 ^. i1_select) (state ^. state_ilo1_a)
-                    return (state & state_ilo1_a .~ new_ilo1_a))
-                (\e -> do
-                    let err = show (e :: SqlError)
-                    return (state & state_status .~ (unpack $ sqlErrorMsg e))))
-            mainLoop new_state
-        Just (EventCharacter 'i') -> do
-            new_ilo1_a <- liftIO $ (state ^. state_ilo1 ^. ilo1_i1 ^. i1_insert) (state ^. state_ilo1_a)
-            mainLoop (state & state_ilo1_a .~ new_ilo1_a)
-        Just (EventCharacter 'u') -> do
-            max_y <- updateWindow (state ^. state_w) $ do
-                max_y <- fmap (fromInteger . fst) windowSize
-                return max_y
-            update_str <- getString (state ^. stateInputWindow) "?" 0 0
-            new_state <- liftIO (catch (do
-                    new_ilo1_a <- (state ^. state_ilo1 ^. ilo1_i1 ^. i1_update) (state ^. state_ilo1_a) update_str
-                    return (state & state_ilo1_a .~ new_ilo1_a))
-                (\e -> do
-                    let err = show (e :: SqlError)
-                    return (state & state_status .~ (unpack $ sqlErrorMsg e))))
-            mainLoop new_state
-        Just (EventCharacter 'd') -> do
-            new_ilo1_a <- liftIO $ (state ^. state_ilo1 ^. ilo1_i1 ^. i1_delete) (state ^. state_ilo1_a)
-            mainLoop (state & state_ilo1_a .~ new_ilo1_a)
-        Just (EventCharacter 'c') -> mainLoop (state & state_status .~ "")
-        _ -> mainLoop state
+        Just (EventCharacter 'c') -> mainLoop (state & coreState . coreStatus .~ "")
+        Just event -> catch
+            ((state & appState %%~ spaProcessEvent (state ^. coreState ^. coreInputWindow) event) >>= mainLoop)
+            (\e -> mainLoop (state & coreState . coreStatus .~ (unpack (sqlErrorMsg e))))
+        Nothing -> mainLoop state
+
+spaProcessEvent :: Window -> Event -> SimpleProjectionApp a row -> Curses (SimpleProjectionApp a row)
+spaProcessEvent inputWindow event spa = do
+    case event of
+        EventCharacter 'k' -> liftIO . return $ spa & spaA %~ (spa ^. spaILO1 ^. ilo1_i1 ^. i1_up)
+        EventCharacter 'j' -> liftIO . return $ spa & spaA %~ (spa ^. spaILO1 ^. ilo1_i1 ^. i1_down)
+        EventCharacter 'h' -> liftIO . return $ spa & spaA %~ (spa ^. spaILO1 ^. ilo1_i1 ^. i1_left)
+        EventCharacter 'l' -> liftIO . return $ spa & spaA %~ (spa ^. spaILO1 ^. ilo1_i1 ^. i1_right)
+        EventCharacter 's' -> liftIO $ spa & spaA %%~ (spa ^. spaILO1 ^. ilo1_i1 ^. i1_select)
+        EventCharacter 'i' -> liftIO $ spa & spaA %%~ (spa ^. spaILO1 ^. ilo1_i1 ^. i1_insert)
+        EventCharacter 'u' -> do
+            updateStr <- getString inputWindow "?" 0 0
+            liftIO $ spa & spaA %%~ ((spa ^. spaILO1 ^. ilo1_i1 ^. i1_update) updateStr)
+        EventCharacter 'd' -> liftIO $ spa & spaA %%~ (spa ^. spaILO1 ^. ilo1_i1 ^. i1_delete)
+        _ -> return spa
+
+--
 
 waitFor :: Window -> (Event -> Bool) -> Curses ()
 waitFor w p = loop where

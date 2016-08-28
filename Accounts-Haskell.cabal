@@ -26,6 +26,7 @@ executable Accounts-Haskell
                        ncurses,
                        lens,
                        ListZipper,
-                       transformers
+                       transformers,
+                       exceptions
   hs-source-dirs:      src
   default-language:    Haskell2010
