@@ -10,6 +10,7 @@ import Projection
 import Accounts
 import AccountSelector
 import TransactionSelector
+import SplitSelector
 import Data.List.Zipper
 import Control.Lens
 import Control.Monad.IO.Class (liftIO)
@@ -51,8 +52,9 @@ data BigState a row = BigState {
 
 makeLenses ''BigState
 
-accountsProj conn = Projection (LO1 (fromList []) (fromList account_alenses) (fromList [])) account_selector conn
-transactionsProj conn = Projection (LO1 (fromList []) (fromList transactionAlenses) (fromList [])) transactionSelector conn
+accountProj conn = Projection (LO1 (fromList []) (fromList account_alenses) (fromList [])) account_selector conn
+transactionProj conn = Projection (LO1 (fromList []) (fromList transactionAlenses) (fromList [])) transactionSelector conn
+splitProj conn = Projection (LO1 (fromList []) (fromList splitAlenses) (fromList [])) splitSelector conn
 
 main :: IO ()
 main = do
@@ -67,7 +69,7 @@ main = do
         inputWindow <- newWindow 1 (max_x - 1) (max_y - 3) 1
         statusWindow <- newWindow 1 (max_x - 1) (max_y - 2) 1
         let coreState = CoreState mainWindow statusWindow inputWindow conn colors "Welcome"
-        let appState = SimpleProjectionApp projectionILO1 (accountsProj conn)
+        let appState = SimpleProjectionApp projectionILO1 (accountProj conn)
         let bigState = BigState coreState appState
         mainLoop bigState
 
@@ -88,9 +90,11 @@ mainLoop state = do
     event <- getEvent (state ^. coreState ^. coreMainWindow) Nothing
     case event of
         Just (EventCharacter '1') -> mainLoop (state & appState .~
-            (SimpleProjectionApp projectionILO1 (accountsProj (state ^. coreState ^. coreConnection))))
+            (SimpleProjectionApp projectionILO1 (accountProj (state ^. coreState ^. coreConnection))))
         Just (EventCharacter '2') -> mainLoop (state & appState .~
-            (SimpleProjectionApp projectionILO1 (transactionsProj (state ^. coreState ^. coreConnection))))
+            (SimpleProjectionApp projectionILO1 (transactionProj (state ^. coreState ^. coreConnection))))
+        Just (EventCharacter '3') -> mainLoop (state & appState .~
+            (SimpleProjectionApp projectionILO1 (splitProj (state ^. coreState ^. coreConnection))))
         Just (EventCharacter 'q') -> return ()
         Just (EventCharacter 'c') -> mainLoop (state & coreState . coreStatus .~ "")
         Just event -> catch
