@@ -16,6 +16,7 @@ import Control.Monad.IO.Class (liftIO)
 import Data.ByteString.Char8 (unpack)
 import Control.Monad.Catch
 import Control.Exception (throwIO)
+import Filter
 
 -- allow exceptions to be caught in Curses monad
 
@@ -50,8 +51,8 @@ data BigState a row = BigState {
 
 makeLenses ''BigState
 
-accountsProj conn = Projection (LO1 (fromList []) (fromList account_alenses)) account_selector conn
-transactionsProj conn = Projection (LO1 (fromList []) (fromList transactionAlenses)) transactionSelector conn
+accountsProj conn = Projection (LO1 (fromList []) (fromList account_alenses) (fromList [])) account_selector conn
+transactionsProj conn = Projection (LO1 (fromList []) (fromList transactionAlenses) (fromList [])) transactionSelector conn
 
 main :: IO ()
 main = do
@@ -76,7 +77,7 @@ mainLoop state = do
     updateWindow (state ^. coreState ^. coreStatusWindow) $ do
         clear
         max_x <- fmap (fromInteger . snd) windowSize
-        drawStringPos (clipString (max_x-1) (state ^. coreState ^. coreStatus)) 0 0
+        drawStringPos (clipString (max_x-1) (state ^. coreState ^. coreStatus)) 0 2
     updateWindow (state ^. coreState ^. coreInputWindow) $ do
         clear
     drawLO1
@@ -100,16 +101,20 @@ mainLoop state = do
 spaProcessEvent :: Window -> Event -> SimpleProjectionApp a row -> Curses (SimpleProjectionApp a row)
 spaProcessEvent inputWindow event spa = do
     case event of
-        EventCharacter 'k' -> liftIO . return $ spa & spaA %~ (spa ^. spaILO1 ^. ilo1_i1 ^. i1_up)
-        EventCharacter 'j' -> liftIO . return $ spa & spaA %~ (spa ^. spaILO1 ^. ilo1_i1 ^. i1_down)
-        EventCharacter 'h' -> liftIO . return $ spa & spaA %~ (spa ^. spaILO1 ^. ilo1_i1 ^. i1_left)
-        EventCharacter 'l' -> liftIO . return $ spa & spaA %~ (spa ^. spaILO1 ^. ilo1_i1 ^. i1_right)
+        EventCharacter 'k' -> return $ spa & spaA %~ (spa ^. spaILO1 ^. ilo1_i1 ^. i1_up)
+        EventCharacter 'j' -> return $ spa & spaA %~ (spa ^. spaILO1 ^. ilo1_i1 ^. i1_down)
+        EventCharacter 'h' -> return $ spa & spaA %~ (spa ^. spaILO1 ^. ilo1_i1 ^. i1_left)
+        EventCharacter 'l' -> return $ spa & spaA %~ (spa ^. spaILO1 ^. ilo1_i1 ^. i1_right)
         EventCharacter 's' -> liftIO $ spa & spaA %%~ (spa ^. spaILO1 ^. ilo1_i1 ^. i1_select)
         EventCharacter 'i' -> liftIO $ spa & spaA %%~ (spa ^. spaILO1 ^. ilo1_i1 ^. i1_insert)
         EventCharacter 'u' -> do
-            updateStr <- getString inputWindow "?" 0 0
+            updateStr <- getString inputWindow "?" 0 2
             liftIO $ spa & spaA %%~ ((spa ^. spaILO1 ^. ilo1_i1 ^. i1_update) updateStr)
         EventCharacter 'd' -> liftIO $ spa & spaA %%~ (spa ^. spaILO1 ^. ilo1_i1 ^. i1_delete)
+        EventCharacter 'f' -> do
+            filterStr <- getString inputWindow "?" 0 2
+            return $ spa & spaA %~ ((spa ^. spaILO1 ^. ilo1_i1 ^. i1_set_filters) [Filter filterStr])
+        EventCharacter 'F' -> return $ spa & spaA %~ (spa ^. spaILO1 ^. ilo1_i1 ^. i1_reset_filters)
         _ -> return spa
 
 --
@@ -132,6 +137,7 @@ getString w s y x = do
 
 getStringLoop w s y x = do
     render
+    max_x <- updateWindow w (fmap (fromInteger . snd) windowSize)
     ev <- getEvent w Nothing
     case ev of
         Just (EventSpecialKey KeyBackspace) -> case s of
@@ -144,10 +150,14 @@ getStringLoop w s y x = do
                 getStringLoop w (tail s) y (x-1)
         Just (EventCharacter '\n') -> return (reverse s)
         Just (EventCharacter c) -> do
-            updateWindow w $ do
-                moveCursor y x
-                drawString [c]
-            getStringLoop w (c:s) y (x+1)
+            if (x < (max_x -2)) -- don't draw off window, caps max size of return string; why not scroll string?
+                then do
+                    updateWindow w $ do
+                        moveCursor y x
+                        drawString [c]
+                    getStringLoop w (c:s) y (x+1)
+                else
+                    getStringLoop w s y x
         _ -> getStringLoop w s y x
 
 -- LO1RowToStrings :: (LO1 row) -> row -> [String]
@@ -255,3 +265,6 @@ drawLO1 w lo1 cid = updateWindow w $ do
             foldl (>>) (return ()) qq2
             setColor defaultColorID
             foldl (>>) (return ()) (toList (fmap (foldl (>>) (return ())) w4))
+            drawStringPos (clipString (fromInteger (max_x-3))
+                ("Filter " ++ filtersToSql (toList (lo1 ^. lo1_zip_filters)))) (max_y-1) 2
+

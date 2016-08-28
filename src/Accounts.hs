@@ -5,6 +5,7 @@ module Accounts where
 import Database.PostgreSQL.Simple
 import Data.List.Zipper
 import Control.Lens
+import Filter
 
 -- Accounts core API
 
@@ -29,6 +30,8 @@ data I1 a = I1 {
     _i1_insert :: a -> IO a,
     _i1_update :: String -> a -> IO a,
     _i1_delete :: a -> IO a,
+    _i1_set_filters :: [Filter] -> a -> a,
+    _i1_reset_filters :: a -> a,
     _i1_up :: a -> a,
     _i1_down :: a -> a,
     _i1_left :: a -> a,
@@ -41,7 +44,8 @@ makeLenses ''I1
 
 data LO1 row = LO1 {
     _lo1_zip_row :: Zipper row,
-    _lo1_zip_lens :: Zipper (AccLens row)
+    _lo1_zip_lens :: Zipper (AccLens row),
+    _lo1_zip_filters :: Zipper Filter
     }
 
 makeLenses ''LO1
@@ -55,12 +59,15 @@ data ILO1 a row = ILO1 {
 
 makeLenses ''ILO1
 
+ilo1GetFilters :: (ILO1 a row) -> a -> [Filter]
+ilo1GetFilters ilo1 a = toList (((ilo1 ^. ilo1_lo1f) a) ^. lo1_zip_filters)
+
 -- Implementation helps
 
 -- IOSelector
 
 data IOSelector row = IOSelector {
-    _ios_select :: Connection -> IO [row],
+    _ios_select :: Connection -> [Filter] -> IO [row],
     _ios_insert :: Connection -> IO row,
     _ios_update :: Connection -> row -> IO row,
     _ios_delete :: Connection -> row -> IO ()

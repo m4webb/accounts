@@ -4,6 +4,7 @@
 module AccountSelector where
 
 import Accounts
+import Filter
 import Data.Maybe
 import Data.ByteString.Char8 hiding (head)
 import Database.PostgreSQL.Simple
@@ -61,8 +62,14 @@ instance FromRow AccountRow where
 account_selector :: IOSelector AccountRow
 account_selector = IOSelector account_select account_insert account_update account_delete
 
-account_select :: Connection -> IO [AccountRow]
-account_select conn = query_ conn "SELECT aid, kind, name, description FROM accounts ORDER BY name;"
+account_select:: Connection -> [Filter] -> IO [AccountRow]
+account_select conn filters = query_ conn (Query (intercalate "\n" [
+    "SELECT aid, kind, name, description",
+    "FROM accounts",
+    pack (filtersToSql filters),
+    "ORDER BY name",
+    ";"
+    ]))
 
 account_insert :: Connection -> IO AccountRow
 account_insert conn = do

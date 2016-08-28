@@ -4,6 +4,7 @@
 module TransactionSelector where
 
 import Accounts
+import Filter
 import Data.Maybe
 import Data.ByteString.Char8 hiding (head)
 import Database.PostgreSQL.Simple
@@ -56,8 +57,14 @@ instance FromRow TransactionRow where
 transactionSelector :: IOSelector TransactionRow
 transactionSelector = IOSelector transactionSelect transactionInsert transactionUpdate transactionDelete
 
-transactionSelect :: Connection -> IO [TransactionRow]
-transactionSelect conn = query_ conn "SELECT tid, date, description FROM transactions ORDER BY date;"
+transactionSelect :: Connection -> [Filter] -> IO [TransactionRow]
+transactionSelect conn filters = query_ conn (Query (intercalate "\n" [
+    "SELECT tid, date, description",
+    "FROM transactions",
+    pack (filtersToSql filters),
+    "ORDER BY date",
+    ";"
+    ]))
 
 transactionInsert :: Connection -> IO TransactionRow
 transactionInsert conn = do

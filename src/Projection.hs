@@ -29,13 +29,16 @@ projection_i1 = I1
     projection_i1_insert
     projection_i1_update
     projection_i1_delete
+    projection_i1_set_filters
+    projection_i1_reset_filters
     projection_i1_up
     projection_i1_down
     projection_i1_left
     projection_i1_right
 
 projection_i1_select self = do
-    rows <- (self ^. proj_ios) ^. ios_select $ (self ^. proj_conn)
+    let filters = toList (self ^. proj_lo1 ^. lo1_zip_filters)
+    rows <- ((self ^. proj_ios) ^. ios_select) (self ^. proj_conn) filters
     return $ self & proj_zip_row .~ (fromList rows)
 
 projection_i1_insert self = do
@@ -66,6 +69,10 @@ projection_i1_delete self = do
         Just curr_row -> do
             ((self ^. proj_ios) ^. ios_delete) (self ^. proj_conn) curr_row
             return $ self & proj_zip_row %~ pop . right
+
+projection_i1_set_filters filters self = self & proj_lo1 . lo1_zip_filters .~ fromList filters
+
+projection_i1_reset_filters self = self & proj_lo1 . lo1_zip_filters .~ fromList [] 
 
 projection_i1_up self = self & proj_zip_row %~ left
 
