@@ -129,9 +129,13 @@ splitSidAlens = AccLens
     Nothing
     "sid"
 
+splitTidSet row mval = case (readMaybe mval) of
+    Nothing -> throw (SqlError "" NonfatalError (pack ("cannot read " ++ mval)) "" "")
+    Just val -> row & splitTid .~ val
+
 splitTidAlens = AccLens
     (\row -> show (row ^. splitTid))
-    Nothing
+    (Just splitTidSet)
     "tid"
 
 splitAccountAlens = AccLens

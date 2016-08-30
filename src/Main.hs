@@ -19,6 +19,14 @@ import Control.Monad.Catch
 import Control.Exception (throwIO)
 import Filter
 
+-- TODO: State monad
+
+data TransactionState = TransactionBegin | TransactionError
+
+instance Show TransactionState where
+    show TransactionBegin = "TransactionBegin"
+    show TransactionError = "TransactionError"
+
 -- allow exceptions to be caught in Curses monad
 
 instance MonadThrow Curses where
@@ -33,7 +41,8 @@ data CoreState = CoreState {
     _coreInputWindow :: Window,
     _coreConnection :: Connection,
     _coreColors :: ColorID,
-    _coreStatus :: String
+    _coreStatus :: String,
+    _coreTransactionState :: TransactionState
     }
 
 makeLenses ''CoreState
@@ -56,6 +65,50 @@ accountProj conn = Projection (LO1 (fromList []) (fromList account_alenses) (fro
 transactionProj conn = Projection (LO1 (fromList []) (fromList transactionAlenses) (fromList [])) transactionSelector conn
 splitProj conn = Projection (LO1 (fromList []) (fromList splitAlenses) (fromList [])) splitSelector conn
 
+initBigState state = do
+    liftIO $ begin (state ^. coreState ^. coreConnection)
+    let spa = state ^. appState
+    spaSelected <- liftIO $ spa & spaA %%~ (spa ^. spaILO1 ^. ilo1_i1 ^. i1_select)
+    let state1 = state & appState .~ spaSelected
+    return state1
+
+changeSpa state projFactory = do
+    let newProj = SimpleProjectionApp projectionILO1 (projFactory (state ^. coreState ^. coreConnection))
+    let newState = state & appState .~ newProj
+    let newState1 = newState & coreState . coreTransactionState .~ TransactionBegin
+    let spa = newState1 ^. appState
+    rollback (newState1 ^. coreState ^. coreConnection)
+    begin (newState1 ^. coreState ^. coreConnection)
+    newSpa <- spa & spaA %%~ (spa ^. spaILO1 ^. ilo1_i1 ^. i1_select)
+    let newState2 = newState1 & appState .~ newSpa
+    return newState2
+
+handleSqlError state error = do
+    let newState = state & coreState . coreStatus .~ (unpack (sqlErrorMsg error))
+    let newState1 = newState & coreState . coreTransactionState .~ TransactionError
+    return newState1
+
+-- can I assume that select doesn't fail?
+
+rollbackState state = do
+    rollback (state ^. coreState ^. coreConnection)
+    begin (state ^. coreState ^. coreConnection)
+    newState <- state & appState . spaA %%~ (state ^. appState ^. spaILO1 ^. ilo1_i1 ^. i1_select)
+    let newState1 = newState & coreState . coreTransactionState .~ TransactionBegin
+    let newState2 = newState1 & coreState . coreStatus .~ ""
+    return newState2
+
+commitState state = do
+    -- need to catch here? what happens when commit fails?
+    commit (state ^. coreState ^. coreConnection)
+    begin (state ^. coreState ^. coreConnection)
+    newState <- state & appState . spaA %%~ (state ^. appState ^. spaILO1 ^. ilo1_i1 ^. i1_select)
+    let newState1 = newState & coreState . coreTransactionState .~ TransactionBegin
+    let newState2 = newState1 & coreState . coreStatus .~ ""
+    return newState2
+
+commitStateSafe state = catch (commitState state) (handleSqlError state)
+
 main :: IO ()
 main = do
     conn <- connectPostgreSQL "dbname='accounts' user='matthew' password='matthew'"
@@ -68,9 +121,9 @@ main = do
         mainWindow <- newWindow (max_y - 4) (max_x - 2) 1 1
         inputWindow <- newWindow 1 (max_x - 1) (max_y - 3) 1
         statusWindow <- newWindow 1 (max_x - 1) (max_y - 2) 1
-        let coreState = CoreState mainWindow statusWindow inputWindow conn colors "Welcome"
+        let coreState = CoreState mainWindow statusWindow inputWindow conn colors "Welcome" TransactionBegin
         let appState = SimpleProjectionApp projectionILO1 (accountProj conn)
-        let bigState = BigState coreState appState
+        bigState <- initBigState (BigState coreState appState)
         mainLoop bigState
 
 -- algebraic data type for current view (this or that or...)
@@ -79,7 +132,8 @@ mainLoop state = do
     updateWindow (state ^. coreState ^. coreStatusWindow) $ do
         clear
         max_x <- fmap (fromInteger . snd) windowSize
-        drawStringPos (clipString (max_x-1) (state ^. coreState ^. coreStatus)) 0 2
+        let msg = (show (state ^. coreState ^. coreTransactionState)) ++ " " ++ (state ^. coreState ^. coreStatus)
+        drawStringPos (clipString (max_x-1) msg) 0 2
     updateWindow (state ^. coreState ^. coreInputWindow) $ do
         clear
     drawLO1
@@ -89,17 +143,26 @@ mainLoop state = do
     render
     event <- getEvent (state ^. coreState ^. coreMainWindow) Nothing
     case event of
-        Just (EventCharacter '1') -> mainLoop (state & appState .~
-            (SimpleProjectionApp projectionILO1 (accountProj (state ^. coreState ^. coreConnection))))
-        Just (EventCharacter '2') -> mainLoop (state & appState .~
-            (SimpleProjectionApp projectionILO1 (transactionProj (state ^. coreState ^. coreConnection))))
-        Just (EventCharacter '3') -> mainLoop (state & appState .~
-            (SimpleProjectionApp projectionILO1 (splitProj (state ^. coreState ^. coreConnection))))
+        Just (EventCharacter '1') -> do
+            newState <- liftIO $ changeSpa state accountProj
+            mainLoop newState
+        Just (EventCharacter '2') -> do
+            newState <- liftIO $ changeSpa state transactionProj
+            mainLoop newState
+        Just (EventCharacter '3') ->  do
+            newState <- liftIO $ changeSpa state splitProj
+            mainLoop newState
+        Just (EventCharacter 'r') -> do
+            newState <- liftIO $ rollbackState state
+            mainLoop newState
+        Just (EventCharacter 'c') -> do
+            newState <- liftIO $ commitStateSafe state
+            mainLoop newState
+        Just (EventCharacter 'b') -> mainLoop (state & coreState . coreStatus .~ "")
         Just (EventCharacter 'q') -> return ()
-        Just (EventCharacter 'c') -> mainLoop (state & coreState . coreStatus .~ "")
         Just event -> catch
             ((state & appState %%~ spaProcessEvent (state ^. coreState ^. coreInputWindow) event) >>= mainLoop)
-            (\e -> mainLoop (state & coreState . coreStatus .~ (unpack (sqlErrorMsg e))))
+            (\e -> (handleSqlError state e) >>= mainLoop)
         Nothing -> mainLoop state
 
 spaProcessEvent :: Window -> Event -> SimpleProjectionApp a row -> Curses (SimpleProjectionApp a row)
