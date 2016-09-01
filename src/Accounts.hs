@@ -35,7 +35,8 @@ data I1 a = I1 {
     _i1_up :: a -> a,
     _i1_down :: a -> a,
     _i1_left :: a -> a,
-    _i1_right :: a -> a
+    _i1_right :: a -> a,
+    _i1_switch :: a -> a
     }
 
 makeLenses ''I1

@@ -35,6 +35,7 @@ projection_i1 = I1
     projection_i1_down
     projection_i1_left
     projection_i1_right
+    projection_i1_switch
 
 projection_i1_select self = do
     let filters = toList (self ^. proj_lo1 ^. lo1_zip_filters)
@@ -81,5 +82,7 @@ projection_i1_down self = self & proj_zip_row %~ rightCheck . right
 projection_i1_left self = self & proj_zip_lens %~ left
 
 projection_i1_right self = self & proj_zip_lens %~ rightCheck . right
+
+projection_i1_switch self = self
 
 projectionILO1 = ILO1 projection_i1 (\p -> (p ^. proj_lo1))
