@@ -147,7 +147,13 @@ splitKindGet :: SplitRow -> String
 splitKindGet row = unpackSK $ row ^. splitKind
 
 splitKindSet :: SplitRow -> String -> SplitRow
-splitKindSet row val = row & splitKind .~ (packSK val)
+splitKindSet row val = case val of
+    "credit" -> row & splitKind .~ (packSK "credit")
+    "c" -> row & splitKind .~ (packSK "credit")
+    "" -> row & splitKind .~ (packSK "credit")
+    "debit" -> row & splitKind .~ (packSK "debit")
+    "d" -> row & splitKind .~ (packSK "debit")
+    _ ->   throw (SqlError "" NonfatalError (pack (val ++ " must be one of debit, credit")) "" "")
 
 splitKindAlens = AccLens
     splitKindGet
