@@ -1,5 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 module AccountSelector where
 
@@ -39,10 +40,6 @@ instance FromField AccountKind where
 instance ToField AccountKind where
     toField (AccountKind f) = toField f
 
---instance ToField (Maybe a) where
---    toField Nothing = toField Null
---    toField (Just val) = toField val
-
 -- account row type
 
 data AccountRow = AccountRow {
@@ -57,37 +54,43 @@ makeLenses ''AccountRow
 instance FromRow AccountRow where
    fromRow = AccountRow <$> field <*> field <*> field <*> field
 
--- IOSelector
+instance IOSelector SimpleIOSelector AccountRow where
+    iosSelect selector = query_ (selector ^. selectorConnection) (Query (intercalate "\n" [
+        "SELECT aid, kind, name, description",
+        "FROM accounts",
+        "ORDER BY name",
+        ";"
+        ]))
 
-account_selector :: IOSelector AccountRow
-account_selector = IOSelector account_select account_insert account_update account_delete
+    iosInsert selector = do
+        let conn = (selector ^. selectorConnection)
+        let query_string = (Query (intercalate "\n" [
+                "INSERT INTO accounts (kind, name)",
+                "VALUES ('asset', 'account_' || TO_CHAR(CURRVAL('public.accounts_aid_seq'), 'FM0999'))",
+                "RETURNING aid, kind, name, description",
+                ";"
+                ]))
+        res <- query_ conn query_string
+        return (head res)
 
-account_select:: Connection -> [Filter] -> IO [AccountRow]
-account_select conn filters = query_ conn (Query (intercalate "\n" [
-    "SELECT aid, kind, name, description",
-    "FROM accounts",
-    pack (filtersToSql filters),
-    "ORDER BY name",
-    ";"
-    ]))
+    iosUpdate selector row = do
+        let conn = (selector ^. selectorConnection)
+        let query_string = (Query (intercalate "\n" [
+                "UPDATE accounts SET kind=?, name=?, description=?",
+                "WHERE aid=? RETURNING aid, kind, name, description",
+                ";"
+                ]))
+        res <- query conn query_string (row ^. account_kind, row ^. account_name, row ^. account_description, row ^. account_aid)
+        return (head res)
 
-account_insert :: Connection -> IO AccountRow
-account_insert conn = do
-    let query_string = "INSERT INTO accounts (kind, name) VALUES ('asset', 'account_' || TO_CHAR(CURRVAL('public.accounts_aid_seq'), 'FM0999')) RETURNING aid, kind, name, description"
-    res <- query_ conn query_string
-    return (head res)
-
-account_update :: Connection -> AccountRow -> IO AccountRow
-account_update conn row = do
-    let query_string = "UPDATE accounts SET kind=?, name=?, description=? WHERE aid=? RETURNING aid, kind, name, description;"
-    res <- query conn query_string (row ^. account_kind, row ^. account_name, row ^. account_description, row ^. account_aid)
-    return (head res)
-
-account_delete :: Connection -> AccountRow -> IO ()
-account_delete conn row = do
-    let query_string = "DELETE FROM accounts WHERE aid=?;"
-    execute conn query_string (Only (row ^. account_aid))
-    return ()
+    iosDelete selector row = do
+        let conn = (selector ^. selectorConnection)
+        let query_string = (Query (intercalate "\n" [
+                "DELETE FROM accounts WHERE aid=?",
+                ";"
+                ]))
+        execute conn query_string (Only (row ^. account_aid))
+        return ()
 
 -- AccLens
 

@@ -8,9 +8,6 @@ import UI.NCurses.Types
 import Database.PostgreSQL.Simple
 import Projection
 import Accounts
-import AccountSelector
-import TransactionSelector
-import SplitSelector
 import Data.List.Zipper
 import Control.Lens
 import Control.Monad.IO.Class (liftIO)
@@ -18,9 +15,11 @@ import Data.ByteString.Char8 (unpack)
 import Control.Monad.Catch
 import Control.Exception (throwIO)
 import Filter
+import Data.Bool
 
 data Colors = Colors {
-    _colorRed :: ColorID
+    _colorRed :: ColorID,
+    _colorYellow :: ColorID
     }
 
 makeLenses ''Colors
@@ -79,7 +78,7 @@ drawError = do
 
 inmap fns args = [f a | (f, a) <- zip fns args]
 
-maxLength = 25
+maxLength = 35
 
 drawGlyphPos glyph (y, x) = do
     moveCursor y x
@@ -126,7 +125,7 @@ applyZipperY (Zip ls (curs:rs)) cursor_start max_y = Zip [fmaparg a r | (r, a) <
 
 applyZipperX z xs = fmap (\r -> [f x | (f, x) <- (zip r xs)]) z
 
-drawLO1 w colors lo1 = updateWindow w $ do
+drawLO1 w colors lo1 active = updateWindow w $ do
     clear
     max_y <- fmap fst windowSize
     max_x <- fmap snd windowSize
@@ -156,13 +155,22 @@ drawLO1 w colors lo1 = updateWindow w $ do
             let q2 = fmaparg ((quot max_y 2) - 1) q1
             let q3 = [f a | (f, a) <- (zip q2 strStarts)] 
             foldl (>>) (return ()) q3
-            setColor (colors ^. colorRed)
-            let qq0 = [(lens, x) | (lens, x) <- zip (toList $ lo1 ^. lo1_zip_lens) strStarts]
-            let qq1 = filter (\(lens, x) -> lens == (cursor (lo1 ^. lo1_zip_lens))) qq0
-            let qq2 = fmap (\(lens, x) -> drawStringPos (lens ^. alens_name) ((quot max_y 2) - 1) x) qq1
-            foldl (>>) (return ()) qq2
-            setColor defaultColorID
+            case active of
+                True -> do
+                    setColor (colors ^. colorRed)
+                    let qq0 = [(lens, x) | (lens, x) <- zip (toList $ lo1 ^. lo1_zip_lens) strStarts]
+                    let qq1 = filter (\(lens, x) -> lens == (cursor (lo1 ^. lo1_zip_lens))) qq0
+                    let qq2 = fmap (\(lens, x) -> drawStringPos (lens ^. alens_name) ((quot max_y 2) - 1) x) qq1
+                    foldl (>>) (return ()) qq2
+                    setColor defaultColorID
+                False -> do
+                    setColor (colors ^. colorYellow)
+                    let qq0 = [(lens, x) | (lens, x) <- zip (toList $ lo1 ^. lo1_zip_lens) strStarts]
+                    let qq1 = filter (\(lens, x) -> lens == (cursor (lo1 ^. lo1_zip_lens))) qq0
+                    let qq2 = fmap (\(lens, x) -> drawStringPos (lens ^. alens_name) ((quot max_y 2) - 1) x) qq1
+                    foldl (>>) (return ()) qq2
+                    setColor defaultColorID
             foldl (>>) (return ()) (toList (fmap (foldl (>>) (return ())) w4))
-            drawStringPos (clipString (fromInteger (max_x-3))
-                ("Filter " ++ filtersToSql (toList (lo1 ^. lo1_zip_filters)))) (max_y-1) 2
+            --drawStringPos (clipString (fromInteger (max_x-3))
+            --    ("Filter " ++ filtersToSql (toList (lo1 ^. lo1_zip_filters)))) (max_y-1) 2
 

@@ -1,5 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 module SplitSelector where
 
@@ -58,67 +59,160 @@ makeLenses ''SplitRow
 instance FromRow SplitRow where
    fromRow = SplitRow <$> field <*> field <*> field <*> field <*> field <*> field
 
+data ScopedIOSelector = ScopedIOSelector {
+    _scopedConnection :: Connection,
+    _scopedId :: Int
+    }
+
+makeLenses ''ScopedIOSelector
+
+class IDAble a where
+    getID :: a -> Int
+
 -- IOSelector
 
-splitSelector :: IOSelector SplitRow 
-splitSelector = IOSelector splitSelect splitInsert splitUpdate splitDelete
+instance IOSelector SimpleIOSelector SplitRow where
+    iosSelect selector = query_ (selector ^. selectorConnection) (Query (intercalate "\n" [
+        "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
+        "FROM splits s",
+        "INNER JOIN accounts a on s.aid = a.aid",
+        "ORDER BY s.tid",
+        ";"
+        ]))
 
-splitSelect:: Connection -> [Filter] -> IO [SplitRow]
-splitSelect conn filters = query_ conn (Query (intercalate "\n" [
-    "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
-    "FROM splits s",
-    "INNER JOIN accounts a on s.aid = a.aid",
-    pack (filtersToSql filters),
-    "ORDER BY s.tid",
-    ";"
-    ]))
+    iosInsert selector = do
+        let conn = selector ^. selectorConnection
+        let insertQueryStr = Query (intercalate "\n" [
+                "INSERT INTO splits (tid, aid, kind, amount) VALUES (",
+                "(SELECT MIN(tid) from transactions),",
+                "(SELECT MIN(aid) from accounts),",
+                "'debit',",
+                "0)",
+                "RETURNING sid",
+                ";"
+                ])
+        let selectQueryStrFmt = (Query (intercalate "\n" [
+                "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
+                "FROM splits s",
+                "INNER JOIN accounts a on s.aid = a.aid",
+                "WHERE s.sid=?",
+                "ORDER BY s.tid",
+                ";"
+                ]))
+        [Only sid] <- query_ conn insertQueryStr :: IO [Only Int]
+        [res] <- query conn selectQueryStrFmt [sid]
+        return res
 
-splitInsertQueryStr = Query (intercalate "\n" [
-    "INSERT INTO splits (tid, aid, kind, amount) VALUES (",
-    "(SELECT MIN(tid) from transactions),",
-    "(SELECT MIN(aid) from accounts),",
-    "'debit',",
-    "0)",
-    "RETURNING sid",
-    ";"
-    ])
+    iosUpdate selector row = do
+        let conn = selector ^. selectorConnection
+        let splitUpdateQueryStrFmt = Query (intercalate "\n" [
+                "UPDATE splits SET tid=?, aid=?, kind=?, amount=?, memo=?",
+                "WHERE sid=? RETURNING sid",
+                ";"
+                ])
+        let selectQueryStrFmt = (Query (intercalate "\n" [
+                "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
+                "FROM splits s",
+                "INNER JOIN accounts a on s.aid = a.aid",
+                "WHERE s.sid=?",
+                "ORDER BY s.tid",
+                ";"
+                ]))
+        let accountAidFromNameQuery = Query "SELECT aid FROM accounts where name=?;"
+        aids <- query conn accountAidFromNameQuery [row ^. splitAccount] :: IO [Only Int]
+        case aids of
+            [Only aid] -> do
+                [Only sid] <- query conn splitUpdateQueryStrFmt (
+                    row ^. splitTid,
+                    aid :: Int,
+                    row ^. splitKind,
+                    row ^. splitAmount,
+                    row ^. splitMemo,
+                    row ^.  splitSid
+                    ) :: IO [Only Int]
+                [res] <- query conn selectQueryStrFmt [sid]
+                return res
+            _ -> throw (SqlError "" NonfatalError (pack ("no account named " ++ (row ^. splitAccount))) "" "")
 
-splitInsert :: Connection -> IO SplitRow
-splitInsert conn = do
-    [Only sid] <- query_ conn splitInsertQueryStr :: IO [Only Int]
-    [res] <- splitSelect conn [Filter ("sid=" ++ (show sid))]
-    return res
+    iosDelete selector row = do
+        let conn = selector ^. selectorConnection
+        let queryString = "DELETE FROM splits WHERE sid=?;"
+        execute conn queryString (Only (row ^. splitSid))
+        return ()
 
-splitUpdateQueryStrFmt = Query (intercalate "\n" [
-    "UPDATE splits SET tid=?, aid=?, kind=?, amount=?, memo=?",
-    "WHERE sid=? RETURNING sid",
-    ";"
-    ])
+-- ScopedIOSelector
 
-accountAidFromNameQuery = Query "SELECT aid FROM accounts where name=?;"
+instance IOSelector ScopedIOSelector SplitRow where
+    iosSelect scoped = do
+        let tid = scoped ^. scopedId
+        let conn = scoped ^. scopedConnection
+        let selectQueryStrFmt = Query (intercalate "\n" [
+                "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
+                "FROM splits s",
+                "INNER JOIN accounts a on s.aid = a.aid",
+                "WHERE s.tid=?",
+                "ORDER BY s.tid",
+                ";"
+                ])
+        query conn selectQueryStrFmt [tid]
 
-splitUpdate :: Connection -> SplitRow -> IO SplitRow
-splitUpdate conn row = do
-    aids <- query conn accountAidFromNameQuery [row ^. splitAccount] :: IO [Only Int]
-    case aids of
-        [Only aid] -> do
-            [Only sid] <- query conn splitUpdateQueryStrFmt (
-                row ^. splitTid,
-                aid :: Int,
-                row ^. splitKind,
-                row ^. splitAmount,
-                row ^. splitMemo,
-                row ^.  splitSid
-                ) :: IO [Only Int]
-            [res] <- splitSelect conn [Filter ("sid=" ++ (show sid))]
-            return res
-        _ -> throw (SqlError "" NonfatalError (pack ("no account named " ++ (row ^. splitAccount))) "" "")
+    iosInsert scoped = do
+        let tid = scoped ^. scopedId
+        let conn = scoped ^. scopedConnection
+        let insertQueryStrFmt = Query (intercalate "\n" [
+                "INSERT INTO splits (tid, aid, kind, amount)",
+                "VALUES (?, (SELECT MIN(aid) from accounts), 'debit', 0)",
+                "RETURNING sid",
+                ";"
+                ])
+        let selectQueryStrFmt = (Query (intercalate "\n" [
+                "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
+                "FROM splits s",
+                "INNER JOIN accounts a on s.aid = a.aid",
+                "WHERE s.sid=?",
+                "ORDER BY s.tid",
+                ";"
+                ]))
+        [Only sid] <- query conn insertQueryStrFmt [tid] :: IO [Only Int]
+        [res] <- query conn selectQueryStrFmt [sid]
+        return res
 
-splitDelete :: Connection -> SplitRow -> IO ()
-splitDelete conn row = do
-    let queryString = "DELETE FROM splits WHERE sid=?;"
-    execute conn queryString (Only (row ^. splitSid))
-    return ()
+    iosUpdate scoped row = do
+        let conn = scoped ^. scopedConnection 
+        let splitUpdateQueryStrFmt = Query (intercalate "\n" [
+                "UPDATE splits SET tid=?, aid=?, kind=?, amount=?, memo=?",
+                "WHERE sid=? RETURNING sid",
+                ";"
+                ])
+        let selectQueryStrFmt = (Query (intercalate "\n" [
+                "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
+                "FROM splits s",
+                "INNER JOIN accounts a on s.aid = a.aid",
+                "WHERE s.sid=?",
+                "ORDER BY s.tid",
+                ";"
+                ]))
+        let accountAidFromNameQuery = Query "SELECT aid FROM accounts where name=?;"
+        aids <- query conn accountAidFromNameQuery [row ^. splitAccount] :: IO [Only Int]
+        case aids of
+            [Only aid] -> do
+                [Only sid] <- query conn splitUpdateQueryStrFmt (
+                    row ^. splitTid,
+                    aid :: Int,
+                    row ^. splitKind,
+                    row ^. splitAmount,
+                    row ^. splitMemo,
+                    row ^.  splitSid
+                    ) :: IO [Only Int]
+                [res] <- query conn selectQueryStrFmt [sid]
+                return res
+            _ -> throw (SqlError "" NonfatalError (pack ("no account named " ++ (row ^. splitAccount))) "" "")
+
+    iosDelete scoped row = do
+        let conn = scoped ^. scopedConnection 
+        let queryString = "DELETE FROM splits WHERE sid=?;"
+        execute conn queryString (Only (row ^. splitSid))
+        return ()
 
 -- AccLens
 

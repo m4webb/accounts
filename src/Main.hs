@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Main where
 
@@ -19,6 +20,7 @@ import Control.Monad.Catch
 import Control.Exception (throwIO)
 import Filter
 import DrawingStuff
+import Data.Bool
 
 -- TODO: State monad
 
@@ -40,9 +42,6 @@ data BasicState =
         deriving (Show)
 
 data CoreState = CoreState {
-    _coreMainWindow :: Window,
-    _coreStatusWindow :: Window,
-    _coreInputWindow :: Window,
     _coreConnection :: Connection,
     _coreColors :: Colors,
     _coreStatus :: String,
@@ -51,21 +50,42 @@ data CoreState = CoreState {
 
 makeLenses ''CoreState
 
+data ProjectionPair ios1 row1 row2 = ProjectionPair {
+    _pairParent :: Projection ios1 row1,
+    _pairChild :: Projection ScopedIOSelector row2,
+    _pairParentActive :: Bool
+    }
+
+makeLenses ''ProjectionPair
+
+instance IDAble TransactionRow where
+    getID row = row ^. transactionTid
+
 type CursesInput = String -> Curses (Maybe String)
 
+type Windows = [Window]
+
 class App a where
-    appDraw :: a -> Window -> Colors -> Curses ()
+    appInitWindows :: a -> Curses Windows
+    appDraw :: a -> Windows -> Colors -> Curses ()
     appHandleEvent :: a -> Event -> CursesInput -> Curses (Maybe a)
     appSelect :: a -> Curses a
 
 instance App CoreState where
-    appDraw core window colors = do
-        updateWindow (core ^. coreStatusWindow) $ do
+    appInitWindows core = do
+        max_y <- fmap (fromInteger . fst) screenSize
+        max_x <- fmap (fromInteger . snd) screenSize
+        inputWindow <- newWindow 1 (max_x - 1) (max_y - 3) 1
+        statusWindow <- newWindow 1 (max_x - 1) (max_y - 2) 1
+        return [inputWindow, statusWindow]
+
+    appDraw core (inputWindow:statusWindow:_) colors = do
+        updateWindow statusWindow $ do
             clear
             max_x <- fmap (fromInteger . snd) windowSize
             let msg = (show (core ^. coreBasicState)) ++ " " ++ (core ^. coreStatus)
             drawStringPos (clipString (max_x-1) msg) 0 2
-        updateWindow (core ^. coreInputWindow) $ do
+        updateWindow (inputWindow) $ do -- this is cheating?
             clear
 
     appHandleEvent core event input = do
@@ -78,48 +98,107 @@ instance App CoreState where
 
     appSelect core = return core
 
-instance App (Projection row) where
-    appDraw proj window colors = drawLO1 window colors (getLO1 proj)
+instance (IOSelector ios row) => App (Projection ios row) where
+    appInitWindows proj = do
+        max_y <- fmap (fromInteger . fst) screenSize
+        max_x <- fmap (fromInteger . snd) screenSize
+        mainWindow <- newWindow (max_y - 4) (max_x - 2) 1 1
+        return [mainWindow]
+
+    appDraw proj (window:_) colors = drawLO1 window colors (getLO1 proj) True
 
     appHandleEvent proj event input = do
-        newProj <- case event of
-            EventCharacter 'k' -> return $ i1_up proj
-            EventCharacter 'j' -> return $ i1_down proj
-            EventCharacter 'h' -> return $ i1_left proj
-            EventCharacter 'l' -> return $ i1_right proj
-            EventCharacter 's' -> liftIO $ i1_select proj
-            EventCharacter 'i' -> liftIO $ i1_insert proj
-            EventCharacter 'u' -> do
-                maybeUpdateStr <- input "New value?"
-                case maybeUpdateStr of
-                    Just updateStr -> liftIO $ i1_update proj updateStr
-                    Nothing -> return proj
-            EventCharacter 'd' -> do
-                maybeUpdateStr <- input "Delete?"
-                case maybeUpdateStr of
-                    Just "yes" -> liftIO $ i1_delete proj
-                    _ -> return proj
-            EventCharacter 'f' -> do
-                maybeFilterStr <- input "Filters (CAREFUL!)?"
-                case maybeFilterStr of
-                    Just filterStr -> return $ i1_set_filters proj [Filter filterStr]
-                    Nothing -> return proj
-            EventCharacter 'F' -> return $ i1_reset_filters proj
-            _ -> return proj
+        newProj <- i1HandleEvent proj event input
         return (Just newProj)
 
     appSelect proj = liftIO $ i1_select proj
 
+instance (IOSelector ios1 row1, IOSelector ScopedIOSelector row2, IDAble row1) => App (ProjectionPair ios1 row1 row2) where
+    appInitWindows pair = do
+        max_y <- fmap (fromInteger . fst) screenSize
+        max_x <- fmap (fromInteger . snd) screenSize
+        parentWindow <- newWindow (max_y - 4 - 12) (max_x - 2) 1 1
+        childWindow <- newWindow (12) (max_x - 2) (max_y - 4 - 12) 1
+        return [parentWindow, childWindow]
+
+    appDraw pair (parentWindow:childWindow:_) colors = do
+        drawLO1 parentWindow colors (getLO1 (pair ^. pairParent)) (pair ^. pairParentActive)
+        drawLO1 childWindow colors (getLO1 (pair ^. pairChild)) (not $ pair ^. pairParentActive)
+
+    appHandleEvent pair event input = do
+        case event of
+            EventCharacter 'w' -> return (Just (pair & pairParentActive %~ not))
+            _ -> do
+                case (pair ^. pairParentActive) of
+                    True -> do
+                        newPairParent <- i1HandleEvent (pair ^. pairParent) event input
+                        let newPair1 = pair & pairParent .~ newPairParent
+                        newPair2 <- pairSelectChild newPair1
+                        return (Just newPair2)
+                    False -> do
+                        newPairChild <- i1HandleEvent (pair ^. pairChild) event input
+                        let newPair = pair & pairChild .~ newPairChild
+                        return (Just newPair)
+
+    appSelect pair = do
+        newPairParent <- liftIO $ i1_select (pair ^. pairParent)
+        let newPair1 = pair & pairParent .~ newPairParent
+        newPair2 <- pairSelectChild newPair1
+        return newPair2
+
+
+i1HandleEvent a event input = do
+    case event of
+        EventCharacter 'k' -> liftIO $ i1_up a
+        EventCharacter 'j' -> liftIO $ i1_down a
+        EventCharacter 'h' -> liftIO $ i1_left a
+        EventCharacter 'l' -> liftIO $ i1_right a
+        EventCharacter 's' -> liftIO $ i1_select a
+        EventCharacter 'i' -> liftIO $ i1_insert a
+        EventCharacter 'u' -> do
+            maybeUpdateStr <- input "New value?"
+            case maybeUpdateStr of
+                Just updateStr -> liftIO $ i1_update a updateStr
+                Nothing -> return a
+        EventCharacter 'd' -> do
+            maybeUpdateStr <- input "Delete?"
+            case maybeUpdateStr of
+                Just "yes" -> liftIO $ i1_delete a
+                _ -> return a
+        --EventCharacter 'f' -> do
+        --    maybeFilterStr <- input "Filters (CAREFUL!)?"
+        --    case maybeFilterStr of
+        --        Just filterStr -> liftIO $ i1_set_filters a [Filter filterStr]
+        --        Nothing -> return a
+        --EventCharacter 'F' -> liftIO $ i1_reset_filters a
+        _ -> return a
+
+pairSelectChild pair = do
+    let maybeParentRow = safeCursor ((getLO1 (pair ^. pairParent)) ^. lo1_zip_row)
+    let scopeId = case maybeParentRow of
+            Just row -> getID row
+            Nothing -> -1
+    let newPairChild1 = pair ^. pairChild & proj_ios . scopedId .~ scopeId
+    newPairChild2 <- liftIO $ i1_select newPairChild1
+    let newPair = pair & pairChild .~ newPairChild2
+    return newPair
+
 data BigState a = BigState {
     _coreApp :: CoreState,
-    _mainApp :: a
+    _coreWindows :: Windows,
+    _mainApp :: a,
+    _mainWindows :: Windows
     }
 
 makeLenses ''BigState
 
-accountProj conn = Projection (LO1 (fromList []) (fromList account_alenses) (fromList [])) account_selector conn
-transactionProj conn = Projection (LO1 (fromList []) (fromList transactionAlenses) (fromList [])) transactionSelector conn
-splitProj conn = Projection (LO1 (fromList []) (fromList splitAlenses) (fromList [])) splitSelector conn
+accountProj conn = Projection (SimpleIOSelector conn) (LO1 (fromList []) (fromList account_alenses) (fromList []))
+transactionProj conn = Projection  (SimpleIOSelector conn) (LO1 (fromList []) (fromList transactionAlenses) (fromList []))
+splitProj conn = Projection (SimpleIOSelector conn) (LO1 (fromList []) (fromList splitAlenses) (fromList []))
+splitScopedProj conn = Projection (ScopedIOSelector conn 3) (LO1 (fromList []) (fromList splitAlenses) (fromList []))
+pairProj conn = ProjectionPair (transactionProj conn) (splitScopedProj conn) True
+
+-- sql
 
 handleSqlErrorCore core error = do
     case (sqlExecStatus error) of
@@ -134,6 +213,14 @@ handleSqlErrorCore core error = do
 handleSqlErrorState state error = do
     state & coreApp %%~ (\core -> handleSqlErrorCore core error)
 
+commitUnsafe core = do
+    liftIO $ commit (core ^. coreConnection)
+    let newCore1 = core & coreBasicState .~ BasicStateSelect
+    let newCore2 = newCore1 & coreStatus .~ ""
+    return newCore2
+
+-- main
+
 main :: IO ()
 main = do
     conn <- connectPostgreSQL "dbname='accounts' user='matthew' password='matthew'"
@@ -141,22 +228,20 @@ main = do
         setEcho False
         setCursorMode CursorInvisible
         colorRedID <- newColorID ColorRed ColorDefault 2
-        let colors = Colors colorRedID
-        max_y <- fmap (fromInteger . fst) screenSize
-        max_x <- fmap (fromInteger . snd) screenSize
-        mainWindow <- newWindow (max_y - 4) (max_x - 2) 1 1
-        inputWindow <- newWindow 1 (max_x - 1) (max_y - 3) 1
-        statusWindow <- newWindow 1 (max_x - 1) (max_y - 2) 1
-        let coreApp_ = CoreState mainWindow statusWindow inputWindow conn colors "" BasicStateSelect
+        colorYellowID <- newColorID ColorYellow ColorDefault 3
+        let colors = Colors colorRedID colorYellowID
+        let coreApp_ = CoreState conn colors "" BasicStateSelect
         let mainApp_ = accountProj conn
-        let bigState = BigState coreApp_ mainApp_
+        coreWindows_ <- appInitWindows coreApp_
+        mainWindows_ <- appInitWindows mainApp_
+        let bigState = BigState coreApp_ coreWindows_ mainApp_ mainWindows_
         mainLoop bigState
 
-commitUnsafe core = do
-    liftIO $ commit (core ^. coreConnection)
-    let newCore1 = core & coreBasicState .~ BasicStateSelect
-    let newCore2 = newCore1 & coreStatus .~ ""
-    return newCore2
+changeMainApp state newMainApp = do
+    foldl (>>) (return ()) (fmap closeWindow (state ^. mainWindows))
+    newMainWindows <- appInitWindows newMainApp
+    let newCoreApp = (state ^. coreApp) & coreBasicState .~ BasicStateRollback
+    mainLoop $ BigState newCoreApp (state ^. coreWindows) newMainApp newMainWindows
 
 mainLoop :: App a => BigState a -> Curses ()
 mainLoop state = do
@@ -176,29 +261,18 @@ mainLoop state = do
             let newState = state & coreApp . coreBasicState .~ BasicStateSelect
             mainLoop newState
         BasicStateNormal -> do
-            appDraw (state ^. coreApp) (core ^. coreMainWindow) (core ^. coreColors)
-            appDraw (state ^. mainApp) (core ^. coreMainWindow) (core ^. coreColors)
+            appDraw (state ^. coreApp) (state ^. coreWindows) (core ^. coreColors)
+            appDraw (state ^. mainApp) (state ^. mainWindows) (core ^. coreColors)
             render
-            event <- getEvent (core ^. coreMainWindow) Nothing
+            event <- getEvent (head $ state ^. coreWindows) Nothing
             case event of
-                --Just (EventCharacter '1') -> do
-                --    let newAppControl = AppControl spaDraw spaProcessEvent spaSelect
-                --    let newAppState = SimpleProjectionApp projectionILO1 (accountProj (core ^. coreConnection))
-                --    let newCoreState = core & coreBasicState .~ BasicStateRollback
-                --    mainLoop $ BigState (state ^. coreControl) newCoreState newAppControl newAppState
-                --Just (EventCharacter '2') -> do
-                --    let newAppControl = AppControl spaDraw spaProcessEvent spaSelect
-                --    let newAppState = SimpleProjectionApp projectionILO1 (transactionProj (core ^. coreConnection))
-                --    let newCoreState = core & coreBasicState .~ BasicStateRollback
-                --    mainLoop $ BigState (state ^. coreControl) newCoreState newAppControl newAppState
-                --Just (EventCharacter '3') -> do
-                --    let newAppControl = AppControl spaDraw spaProcessEvent spaSelect
-                --    let newAppState = SimpleProjectionApp projectionILO1 (splitProj (core ^. coreConnection))
-                --    let newCoreState = core & coreBasicState .~ BasicStateRollback
-                --    mainLoop $ BigState (state ^. coreControl) newCoreState newAppControl newAppState
+                Just (EventCharacter '1') -> changeMainApp state (accountProj (core ^. coreConnection))
+                Just (EventCharacter '2') -> changeMainApp state (pairProj (core ^. coreConnection))
+                Just (EventCharacter '3') -> changeMainApp state (transactionProj (core ^. coreConnection))
+                Just (EventCharacter '4') -> changeMainApp state (splitProj (core ^. coreConnection))
                 Nothing -> mainLoop state
                 Just event -> do
-                    let input = getString (core ^. coreInputWindow) 0 2
+                    let input = getString (head $ state ^. coreWindows) 0 2
                     maybeNewCoreApp <- appHandleEvent core event input
                     case maybeNewCoreApp of
                         Just newCoreApp -> mainLoop $ state & coreApp .~ newCoreApp
@@ -210,12 +284,11 @@ mainLoop state = do
                                         Nothing -> return state)
                                 (\e -> handleSqlErrorState state e)
                             mainLoop newState
-
         BasicStateError -> do
-            appDraw core (core ^. coreMainWindow) (core ^. coreColors)
-            appDraw (state ^. mainApp) (core ^. coreMainWindow) (core ^. coreColors)
+            appDraw (state ^. coreApp) (state ^. coreWindows) (core ^. coreColors)
+            appDraw (state ^. mainApp) (state ^. mainWindows) (core ^. coreColors)
             render
-            event <- getEvent (core ^. coreMainWindow) Nothing
+            event <- getEvent (head $ state ^. coreWindows) Nothing
             case event of
                 Just (EventCharacter 'r') -> mainLoop (state & coreApp . coreBasicState .~ BasicStateRollback)
                 _ -> mainLoop state

@@ -1,5 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 module TransactionSelector where
 
@@ -54,35 +55,40 @@ instance FromRow TransactionRow where
 
 -- IOSelector
 
-transactionSelector :: IOSelector TransactionRow
-transactionSelector = IOSelector transactionSelect transactionInsert transactionUpdate transactionDelete
+instance IOSelector SimpleIOSelector TransactionRow where
+    iosSelect selector = query_ (selector ^. selectorConnection) (Query (intercalate "\n" [
+        "SELECT tid, date, description",
+        "FROM transactions",
+        "ORDER BY date",
+        ";"
+        ]))
 
-transactionSelect :: Connection -> [Filter] -> IO [TransactionRow]
-transactionSelect conn filters = query_ conn (Query (intercalate "\n" [
-    "SELECT tid, date, description",
-    "FROM transactions",
-    pack (filtersToSql filters),
-    "ORDER BY date",
-    ";"
-    ]))
+    iosInsert selector = do
+        let conn = selector ^. selectorConnection
+        let queryString = Query (intercalate "\n" [
+                "INSERT INTO transactions (date, description)",
+                "VALUES (CURRENT_DATE, '')",
+                "RETURNING tid, date, description",
+                ";"
+                ])
+        res <- query_ conn queryString
+        return (head res)
 
-transactionInsert :: Connection -> IO TransactionRow
-transactionInsert conn = do
-    let queryString = "INSERT INTO transactions (date, description) VALUES (CURRENT_DATE, '') RETURNING tid, date, description;"
-    res <- query_ conn queryString
-    return (head res)
+    iosUpdate selector row = do
+        let conn = selector ^. selectorConnection
+        let queryString = Query (intercalate "\n" [
+                "UPDATE transactions SET date=?, description=?",
+                "WHERE tid=? RETURNING tid, date, description",
+                ";"
+                ])
+        res <- query conn queryString (row ^. transactionDate, row ^. transactionDescription, row ^. transactionTid)
+        return (head res)
 
-transactionUpdate:: Connection -> TransactionRow -> IO TransactionRow
-transactionUpdate conn row = do
-    let queryString = "UPDATE transactions SET date=?, description=? WHERE tid=? RETURNING tid, date, description;"
-    res <- query conn queryString (row ^. transactionDate, row ^. transactionDescription, row ^. transactionTid)
-    return (head res)
-
-transactionDelete :: Connection -> TransactionRow -> IO ()
-transactionDelete conn row = do
-    let queryString = "DELETE FROM transactions WHERE tid=?;"
-    execute conn queryString (Only (row ^. transactionTid))
-    return ()
+    iosDelete selector row = do
+        let conn = selector ^. selectorConnection
+        let queryString = "DELETE FROM transactions WHERE tid=?;"
+        execute conn queryString (Only (row ^. transactionTid))
+        return ()
 
 -- AccLens
 

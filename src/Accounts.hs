@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 module Accounts where
 
@@ -23,38 +24,17 @@ instance Eq (AccLens row) where
     (==) a b = (a ^. alens_name) == (b ^. alens_name)
     (/=) a b = (a ^. alens_name) /= (b ^. alens_name)
 
--- I1 - Interface 1
-
---data I1 a = I1 {
---    _i1_select :: a -> IO a,
---    _i1_insert :: a -> IO a,
---    _i1_update :: String -> a -> IO a,
---    _i1_delete :: a -> IO a,
---    _i1_set_filters :: [Filter] -> a -> a,
---    _i1_reset_filters :: a -> a,
---    _i1_up :: a -> a,
---    _i1_down :: a -> a,
---    _i1_left :: a -> a,
---    _i1_right :: a -> a,
---    _i1_switch :: a -> a
---    }
-
 class I1 a where 
     i1_select :: a -> IO a
     i1_insert :: a -> IO a
     i1_update :: a -> String -> IO a
     i1_delete :: a -> IO a
-    i1_set_filters :: a -> [Filter] -> a
-    i1_reset_filters :: a -> a
-    i1_up :: a -> a
-    i1_down :: a -> a
-    i1_left :: a -> a
-    i1_right :: a -> a
-    i1_switch :: a -> a
-
--- makeLenses ''I1
-
--- LO1 - Logical Object 1
+    i1_set_filters :: a -> [Filter] -> IO a
+    i1_reset_filters :: a -> IO a
+    i1_up :: a -> IO a
+    i1_down :: a -> IO a
+    i1_left :: a -> IO a
+    i1_right :: a -> IO a
 
 data LO1 row = LO1 {
     _lo1_zip_row :: Zipper row,
@@ -67,27 +47,21 @@ makeLenses ''LO1
 class HasLO1 a where
     getLO1 :: a b -> LO1 b
 
--- ILO1 - Interactive Logical Object 1
+--data IOSelector row = IOSelector {
+--    _ios_select :: Connection -> [Filter] -> IO [row],
+--    _ios_insert :: Connection -> IO row,
+--    _ios_update :: Connection -> row -> IO row,
+--    _ios_delete :: Connection -> row -> IO ()
+--    }
 
---data ILO1 a row = ILO1 {
-    --_ilo1_i1 :: I1 a,
-    --_ilo1_lo1f :: a -> LO1 row
-    --}
+class IOSelector a row where
+    iosSelect :: a -> IO [row]
+    iosInsert :: a -> IO row
+    iosUpdate :: a -> row -> IO row
+    iosDelete :: a -> row -> IO ()
 
---makeLenses ''ILO1
-
---ilo1GetFilters :: (ILO1 a row) -> a -> [Filter]
---ilo1GetFilters ilo1 a = toList (((ilo1 ^. ilo1_lo1f) a) ^. lo1_zip_filters)
-
--- Implementation helps
-
--- IOSelector
-
-data IOSelector row = IOSelector {
-    _ios_select :: Connection -> [Filter] -> IO [row],
-    _ios_insert :: Connection -> IO row,
-    _ios_update :: Connection -> row -> IO row,
-    _ios_delete :: Connection -> row -> IO ()
+data SimpleIOSelector = SimpleIOSelector {
+    _selectorConnection :: Connection
     }
 
-makeLenses ''IOSelector
+makeLenses ''SimpleIOSelector
