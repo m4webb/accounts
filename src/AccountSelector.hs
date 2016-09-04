@@ -14,31 +14,7 @@ import Database.PostgreSQL.Simple.FromField
 import Database.PostgreSQL.Simple.ToField
 import Database.PostgreSQL.Simple.Types
 import Control.Lens
-
--- account_kind type
-
-newtype AccountKind = AccountKind ByteString
-
-instance Show AccountKind where
-    show (AccountKind v) = "AccountKind " ++ show v
-
-unpackAK :: AccountKind -> String
-unpackAK (AccountKind val) = unpack val
-
-packAK :: String -> AccountKind
-packAK val = AccountKind $ pack val
-
-instance FromField AccountKind where
-    fromField f mdata = do
-        typ <- typename f
-        if typ /= "account_kind"
-            then returnError Incompatible f ""
-            else case mdata of
-                Nothing  -> returnError UnexpectedNull f ""
-                Just dat -> return (AccountKind dat)
-
-instance ToField AccountKind where
-    toField (AccountKind f) = toField f
+import SQLTypes
 
 -- account row type
 

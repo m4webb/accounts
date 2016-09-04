@@ -1,6 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module SplitSelector where
 
@@ -17,31 +18,7 @@ import Control.Exception
 import Data.Scientific as Scientific
 import Filter
 import Text.Read
-
--- account_kind type
-
-newtype SplitKind = SplitKind ByteString
-
-instance Show SplitKind where
-    show (SplitKind v) = "SplitKind " ++ show v
-
-unpackSK :: SplitKind -> String
-unpackSK (SplitKind val) = unpack val
-
-packSK :: String -> SplitKind 
-packSK val = SplitKind $ pack val
-
-instance FromField SplitKind where
-    fromField f mdata = do
-        typ <- typename f
-        if typ /= "split_kind"
-            then returnError Incompatible f ""
-            else case mdata of
-                Nothing  -> returnError UnexpectedNull f ""
-                Just dat -> return (SplitKind dat)
-
-instance ToField SplitKind where
-    toField (SplitKind f) = toField f
+import SQLTypes
 
 -- transaction row type
 
@@ -59,16 +36,6 @@ makeLenses ''SplitRow
 instance FromRow SplitRow where
    fromRow = SplitRow <$> field <*> field <*> field <*> field <*> field <*> field
 
-data ScopedIOSelector = ScopedIOSelector {
-    _scopedConnection :: Connection,
-    _scopedId :: Int
-    }
-
-makeLenses ''ScopedIOSelector
-
-class IDAble a where
-    getID :: a -> Int
-
 -- IOSelector
 
 instance IOSelector SimpleIOSelector SplitRow where
@@ -76,7 +43,7 @@ instance IOSelector SimpleIOSelector SplitRow where
         "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
         "FROM splits s",
         "INNER JOIN accounts a on s.aid = a.aid",
-        "ORDER BY s.tid",
+        "ORDER BY s.tid, s.kind DESC",
         ";"
         ]))
 
@@ -96,7 +63,7 @@ instance IOSelector SimpleIOSelector SplitRow where
                 "FROM splits s",
                 "INNER JOIN accounts a on s.aid = a.aid",
                 "WHERE s.sid=?",
-                "ORDER BY s.tid",
+                "ORDER BY s.tid, s.kind DESC",
                 ";"
                 ]))
         [Only sid] <- query_ conn insertQueryStr :: IO [Only Int]
@@ -115,7 +82,7 @@ instance IOSelector SimpleIOSelector SplitRow where
                 "FROM splits s",
                 "INNER JOIN accounts a on s.aid = a.aid",
                 "WHERE s.sid=?",
-                "ORDER BY s.tid",
+                "ORDER BY s.tid, s.kind DESC",
                 ";"
                 ]))
         let accountAidFromNameQuery = Query "SELECT aid FROM accounts where name=?;"
@@ -142,22 +109,22 @@ instance IOSelector SimpleIOSelector SplitRow where
 
 -- ScopedIOSelector
 
-instance IOSelector ScopedIOSelector SplitRow where
+instance IOSelector (ScopedIOSelector Int) SplitRow where
     iosSelect scoped = do
-        let tid = scoped ^. scopedId
+        let tid = scoped ^. scopedScope
         let conn = scoped ^. scopedConnection
         let selectQueryStrFmt = Query (intercalate "\n" [
                 "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
                 "FROM splits s",
                 "INNER JOIN accounts a on s.aid = a.aid",
                 "WHERE s.tid=?",
-                "ORDER BY s.tid",
+                "ORDER BY s.tid, s.kind DESC",
                 ";"
                 ])
         query conn selectQueryStrFmt [tid]
 
     iosInsert scoped = do
-        let tid = scoped ^. scopedId
+        let tid = scoped ^. scopedScope
         let conn = scoped ^. scopedConnection
         let insertQueryStrFmt = Query (intercalate "\n" [
                 "INSERT INTO splits (tid, aid, kind, amount)",
@@ -170,7 +137,7 @@ instance IOSelector ScopedIOSelector SplitRow where
                 "FROM splits s",
                 "INNER JOIN accounts a on s.aid = a.aid",
                 "WHERE s.sid=?",
-                "ORDER BY s.tid",
+                "ORDER BY s.tid, s.kind DESC",
                 ";"
                 ]))
         [Only sid] <- query conn insertQueryStrFmt [tid] :: IO [Only Int]
@@ -189,7 +156,7 @@ instance IOSelector ScopedIOSelector SplitRow where
                 "FROM splits s",
                 "INNER JOIN accounts a on s.aid = a.aid",
                 "WHERE s.sid=?",
-                "ORDER BY s.tid",
+                "ORDER BY s.tid, s.kind DESC",
                 ";"
                 ]))
         let accountAidFromNameQuery = Query "SELECT aid FROM accounts where name=?;"
@@ -217,6 +184,8 @@ instance IOSelector ScopedIOSelector SplitRow where
 -- AccLens
 
 splitAlenses = [splitSidAlens, splitTidAlens, splitAccountAlens, splitKindAlens, splitAmountAlens, splitMemoAlens]
+
+splitScopedAlenses = [splitSidAlens, splitKindAlens, splitAccountAlens, splitAmountAlens, splitMemoAlens]
 
 splitSidAlens = AccLens
     (\row -> show (row ^. splitSid))

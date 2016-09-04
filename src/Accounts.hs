@@ -65,3 +65,15 @@ data SimpleIOSelector = SimpleIOSelector {
     }
 
 makeLenses ''SimpleIOSelector
+
+data ScopedIOSelector a = ScopedIOSelector {
+    _scopedConnection :: Connection,
+    _scopedScope :: a
+    }
+
+makeLenses ''ScopedIOSelector
+
+class IDAble a where
+    getID :: a -> Int
+
+

@@ -19,7 +19,9 @@ import Data.Bool
 
 data Colors = Colors {
     _colorRed :: ColorID,
-    _colorYellow :: ColorID
+    _colorYellow :: ColorID,
+    _colorBlue :: ColorID,
+    _colorWhite :: ColorID
     }
 
 makeLenses ''Colors
@@ -157,14 +159,21 @@ drawLO1 w colors lo1 active = updateWindow w $ do
             foldl (>>) (return ()) q3
             case active of
                 True -> do
-                    setColor (colors ^. colorRed)
-                    let qq0 = [(lens, x) | (lens, x) <- zip (toList $ lo1 ^. lo1_zip_lens) strStarts]
-                    let qq1 = filter (\(lens, x) -> lens == (cursor (lo1 ^. lo1_zip_lens))) qq0
-                    let qq2 = fmap (\(lens, x) -> drawStringPos (lens ^. alens_name) ((quot max_y 2) - 1) x) qq1
-                    foldl (>>) (return ()) qq2
-                    setColor defaultColorID
+                    let maybeCurrentAlens = safeCursor (lo1 ^. lo1_zip_lens)
+                    case maybeCurrentAlens of
+                        Nothing -> return ()
+                        Just currentAlens -> do
+                            let color = case (currentAlens ^. alens_set) of
+                                    Just _ -> colors ^. colorRed
+                                    Nothing -> colors ^. colorYellow
+                            setColor color
+                            let qq0 = [(lens, x) | (lens, x) <- zip (toList $ lo1 ^. lo1_zip_lens) strStarts]
+                            let qq1 = filter (\(lens, x) -> lens == (cursor (lo1 ^. lo1_zip_lens))) qq0
+                            let qq2 = fmap (\(lens, x) -> drawStringPos (lens ^. alens_name) ((quot max_y 2) - 1) x) qq1
+                            foldl (>>) (return ()) qq2
+                            setColor defaultColorID
                 False -> do
-                    setColor (colors ^. colorYellow)
+                    setColor (colors ^. colorWhite)
                     let qq0 = [(lens, x) | (lens, x) <- zip (toList $ lo1 ^. lo1_zip_lens) strStarts]
                     let qq1 = filter (\(lens, x) -> lens == (cursor (lo1 ^. lo1_zip_lens))) qq0
                     let qq2 = fmap (\(lens, x) -> drawStringPos (lens ^. alens_name) ((quot max_y 2) - 1) x) qq1

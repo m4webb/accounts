@@ -14,31 +14,7 @@ import Database.PostgreSQL.Simple.FromField
 import Database.PostgreSQL.Simple.ToField
 import Database.PostgreSQL.Simple.Types
 import Control.Lens
-
--- account_kind type
-
-newtype DateKind = DateKind ByteString
-
-instance Show DateKind where
-    show (DateKind v) = "DateKind " ++ show v
-
-unpackDK :: DateKind -> String
-unpackDK (DateKind val) = unpack val
-
-packDK :: String -> DateKind 
-packDK val = DateKind $ pack val
-
-instance FromField DateKind where
-    fromField f mdata = do
-        typ <- typename f
-        if typ /= "date"
-            then returnError Incompatible f ""
-            else case mdata of
-                Nothing  -> returnError UnexpectedNull f ""
-                Just dat -> return (DateKind dat)
-
-instance ToField DateKind where
-    toField (DateKind f) = toField f
+import SQLTypes
 
 -- transaction row type
 
@@ -91,6 +67,8 @@ instance IOSelector SimpleIOSelector TransactionRow where
         return ()
 
 -- AccLens
+
+transactionAlensesNoId = [transactionDateAlens, transactionDescriptionAlens]
 
 transactionAlenses = [transactionTidAlens, transactionDateAlens, transactionDescriptionAlens]
 
