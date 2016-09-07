@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiWayIf #-}
 
 module SplitSelector where
 
@@ -32,6 +33,9 @@ data SplitRow = SplitRow {
     } deriving (Show)
 
 makeLenses ''SplitRow
+
+instance Eq SplitRow where
+    row1 == row2 = (row1 ^. splitSid) == (row2 ^. splitSid)
 
 instance FromRow SplitRow where
    fromRow = SplitRow <$> field <*> field <*> field <*> field <*> field <*> field
@@ -70,36 +74,82 @@ instance IOSelector SimpleIOSelector SplitRow where
         [res] <- query conn selectQueryStrFmt [sid]
         return res
 
-    iosUpdate selector row = do
-        let conn = selector ^. selectorConnection
-        let splitUpdateQueryStrFmt = Query (intercalate "\n" [
-                "UPDATE splits SET tid=?, aid=?, kind=?, amount=?, memo=?",
-                "WHERE sid=? RETURNING sid",
-                ";"
-                ])
-        let selectQueryStrFmt = (Query (intercalate "\n" [
-                "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
-                "FROM splits s",
-                "INNER JOIN accounts a on s.aid = a.aid",
-                "WHERE s.sid=?",
-                "ORDER BY s.tid, s.kind DESC",
-                ";"
-                ]))
-        let accountAidFromNameQuery = Query "SELECT aid FROM accounts where name=?;"
-        aids <- query conn accountAidFromNameQuery [row ^. splitAccount] :: IO [Only Int]
-        case aids of
-            [Only aid] -> do
-                [Only sid] <- query conn splitUpdateQueryStrFmt (
-                    row ^. splitTid,
-                    aid :: Int,
-                    row ^. splitKind,
-                    row ^. splitAmount,
-                    row ^. splitMemo,
-                    row ^.  splitSid
-                    ) :: IO [Only Int]
-                [res] <- query conn selectQueryStrFmt [sid]
-                return res
-            _ -> throw (SqlError "" NonfatalError (pack ("no account named " ++ (row ^. splitAccount))) "" "")
+    iosUpdate selector row lens val = do
+        let conn = (selector ^. selectorConnection)
+        let sid = (row ^. splitSid)
+        res <- if
+            | lens == splitTidAlens -> do
+                case (readMaybe val :: Maybe Int) of
+                    Nothing -> throw (SqlError "" NonfatalError (pack ("cannot read " ++ val)) "" "")
+                    Just readVal -> do
+                        let queryFmt = (Query (intercalate "\n" [
+                                "UPDATE splits SET tid=?",
+                                "WHERE sid=? RETURNING sid",
+                                ";"
+                                ]))
+                        query conn queryFmt (readVal, sid) :: IO [Only Int]
+            | lens == splitAccountAlens -> do
+                let accountAidFromNameQueryFmt = Query "SELECT aid FROM accounts where name=?;"
+                let queryFmt = (Query (intercalate "\n" [
+                        "UPDATE splits SET aid=?",
+                        "WHERE sid=? RETURNING sid",
+                        ";"
+                        ]))
+                aids <- query conn accountAidFromNameQueryFmt (Only val) :: IO [Only Int]
+                case aids of
+                    [Only aid] -> do
+                        query conn queryFmt (aid, sid)
+                    _ -> throw (SqlError "" NonfatalError (pack ("no account named " ++ (row ^. splitAccount))) "" "")
+            | lens == splitKindAlens -> do
+                let kind = case val of
+                        "credit" -> packSK "credit"
+                        "c" -> packSK "credit"
+                        "" -> packSK "credit"
+                        "debit" -> packSK "debit"
+                        "d" -> packSK "debit"
+                        _ -> throw (SqlError "" NonfatalError (pack (val ++ " must be one of debit, credit")) "" "")
+                let queryFmt = (Query (intercalate "\n" [
+                        "UPDATE splits SET kind=?",
+                        "WHERE sid=? RETURNING sid",
+                        ";"
+                        ])) 
+                query conn queryFmt (kind, sid)
+            | lens == splitAmountAlens -> do
+               case (readMaybe val :: Maybe Scientific) of
+                    Nothing -> throw (SqlError "" NonfatalError (pack ("cannot read " ++ val)) "" "")
+                    Just readVal -> do
+                        let queryFmt = (Query (intercalate "\n" [
+                                "UPDATE splits SET amount=?",
+                                "WHERE sid=? RETURNING sid",
+                                ";"
+                                ]))
+                        query conn queryFmt (readVal, sid)
+            | lens == splitMemoAlens -> do
+                let queryFmt = (Query (intercalate "\n" [
+                        "UPDATE splits SET memo=?",
+                        "WHERE sid=? RETURNING sid",
+                        ";"
+                        ])) 
+                let insertVal = case val of
+                        "None" -> Nothing
+                        justVal -> Just justVal
+                query conn queryFmt (insertVal, sid)
+            | otherwise -> throw (SqlError "" NonfatalError (pack "This field cannot be updated.") "" "")
+        case res of
+            [Only sid] -> do
+                let selectQueryFmt = (Query (intercalate "\n" [
+                        "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
+                        "FROM splits s",
+                        "INNER JOIN accounts a on s.aid = a.aid",
+                        "WHERE s.sid=?",
+                        "ORDER BY s.tid, s.kind DESC",
+                        ";"
+                        ]))
+                res2 <- query conn selectQueryFmt (Only sid)
+                case res2 of
+                    [newRow] -> return newRow
+                    _ -> throw (SqlError "" FatalError (pack "Could not reselect row in split update.") "" "")
+            _ -> throw (SqlError "" FatalError (pack "Unexpected query result in split update.") "" "")
 
     iosDelete selector row = do
         let conn = selector ^. selectorConnection
@@ -144,36 +194,82 @@ instance IOSelector (ScopedIOSelector Int) SplitRow where
         [res] <- query conn selectQueryStrFmt [sid]
         return res
 
-    iosUpdate scoped row = do
-        let conn = scoped ^. scopedConnection 
-        let splitUpdateQueryStrFmt = Query (intercalate "\n" [
-                "UPDATE splits SET tid=?, aid=?, kind=?, amount=?, memo=?",
-                "WHERE sid=? RETURNING sid",
-                ";"
-                ])
-        let selectQueryStrFmt = (Query (intercalate "\n" [
-                "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
-                "FROM splits s",
-                "INNER JOIN accounts a on s.aid = a.aid",
-                "WHERE s.sid=?",
-                "ORDER BY s.tid, s.kind DESC",
-                ";"
-                ]))
-        let accountAidFromNameQuery = Query "SELECT aid FROM accounts where name=?;"
-        aids <- query conn accountAidFromNameQuery [row ^. splitAccount] :: IO [Only Int]
-        case aids of
-            [Only aid] -> do
-                [Only sid] <- query conn splitUpdateQueryStrFmt (
-                    row ^. splitTid,
-                    aid :: Int,
-                    row ^. splitKind,
-                    row ^. splitAmount,
-                    row ^. splitMemo,
-                    row ^.  splitSid
-                    ) :: IO [Only Int]
-                [res] <- query conn selectQueryStrFmt [sid]
-                return res
-            _ -> throw (SqlError "" NonfatalError (pack ("no account named " ++ (row ^. splitAccount))) "" "")
+    iosUpdate scoped row lens val = do
+        let conn = (scoped ^. scopedConnection)
+        let sid = (row ^. splitSid)
+        res <- if
+            | lens == splitTidAlens -> do
+                case (readMaybe val :: Maybe Int) of
+                    Nothing -> throw (SqlError "" NonfatalError (pack ("cannot read " ++ val)) "" "")
+                    Just readVal -> do
+                        let queryFmt = (Query (intercalate "\n" [
+                                "UPDATE splits SET tid=?",
+                                "WHERE sid=? RETURNING sid",
+                                ";"
+                                ]))
+                        query conn queryFmt (readVal, sid) :: IO [Only Int]
+            | lens == splitAccountAlens -> do
+                let accountAidFromNameQueryFmt = Query "SELECT aid FROM accounts where name=?;"
+                let queryFmt = (Query (intercalate "\n" [
+                        "UPDATE splits SET aid=?",
+                        "WHERE sid=? RETURNING sid",
+                        ";"
+                        ]))
+                aids <- query conn accountAidFromNameQueryFmt (Only val) :: IO [Only Int]
+                case aids of
+                    [Only aid] -> do
+                        query conn queryFmt (aid, sid)
+                    _ -> throw (SqlError "" NonfatalError (pack ("no account named " ++ (row ^. splitAccount))) "" "")
+            | lens == splitKindAlens -> do
+                let kind = case val of
+                        "credit" -> packSK "credit"
+                        "c" -> packSK "credit"
+                        "" -> packSK "credit"
+                        "debit" -> packSK "debit"
+                        "d" -> packSK "debit"
+                        _ -> throw (SqlError "" NonfatalError (pack (val ++ " must be one of debit, credit")) "" "")
+                let queryFmt = (Query (intercalate "\n" [
+                        "UPDATE splits SET kind=?",
+                        "WHERE sid=? RETURNING sid",
+                        ";"
+                        ])) 
+                query conn queryFmt (kind, sid)
+            | lens == splitAmountAlens -> do
+               case (readMaybe val :: Maybe Scientific) of
+                    Nothing -> throw (SqlError "" NonfatalError (pack ("cannot read " ++ val)) "" "")
+                    Just readVal -> do
+                        let queryFmt = (Query (intercalate "\n" [
+                                "UPDATE splits SET amount=?",
+                                "WHERE sid=? RETURNING sid",
+                                ";"
+                                ]))
+                        query conn queryFmt (readVal, sid)
+            | lens == splitMemoAlens -> do
+                let queryFmt = (Query (intercalate "\n" [
+                        "UPDATE splits SET memo=?",
+                        "WHERE sid=? RETURNING sid",
+                        ";"
+                        ])) 
+                let insertVal = case val of
+                        "None" -> Nothing
+                        justVal -> Just justVal
+                query conn queryFmt (insertVal, sid)
+            | otherwise -> throw (SqlError "" NonfatalError (pack "This field cannot be updated.") "" "")
+        case res of
+            [Only sid] -> do
+                let selectQueryFmt = (Query (intercalate "\n" [
+                        "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
+                        "FROM splits s",
+                        "INNER JOIN accounts a on s.aid = a.aid",
+                        "WHERE s.sid=?",
+                        "ORDER BY s.tid, s.kind DESC",
+                        ";"
+                        ]))
+                res2 <- query conn selectQueryFmt (Only sid)
+                case res2 of
+                    [newRow] -> return newRow
+                    _ -> throw (SqlError "" FatalError (pack "Could not reselect row in split update.") "" "")
+            _ -> throw (SqlError "" FatalError (pack "Unexpected query result in split update.") "" "")
 
     iosDelete scoped row = do
         let conn = scoped ^. scopedConnection 
@@ -189,47 +285,52 @@ splitScopedAlenses = [splitSidAlens, splitKindAlens, splitAccountAlens, splitAmo
 
 splitSidAlens = AccLens
     (\row -> show (row ^. splitSid))
-    Nothing
+--    Nothing
+    False
     "sid"
 
-splitTidSet row mval = case (readMaybe mval) of
-    Nothing -> throw (SqlError "" NonfatalError (pack ("cannot read " ++ mval)) "" "")
-    Just val -> row & splitTid .~ val
+--splitTidSet row mval = case (readMaybe mval) of
+--    Nothing -> throw (SqlError "" NonfatalError (pack ("cannot read " ++ mval)) "" "")
+--    Just val -> row & splitTid .~ val
 
 splitTidAlens = AccLens
     (\row -> show (row ^. splitTid))
-    (Just splitTidSet)
+--    (Just splitTidSet)
+    True
     "tid"
 
 splitAccountAlens = AccLens
     (\row -> row ^. splitAccount)
-    (Just (\row val -> row & splitAccount .~ val))
+--    (Just (\row val -> row & splitAccount .~ val))
+    True
     "account"
 
 splitKindGet :: SplitRow -> String
 splitKindGet row = unpackSK $ row ^. splitKind
 
-splitKindSet :: SplitRow -> String -> SplitRow
-splitKindSet row val = case val of
-    "credit" -> row & splitKind .~ (packSK "credit")
-    "c" -> row & splitKind .~ (packSK "credit")
-    "" -> row & splitKind .~ (packSK "credit")
-    "debit" -> row & splitKind .~ (packSK "debit")
-    "d" -> row & splitKind .~ (packSK "debit")
-    _ ->   throw (SqlError "" NonfatalError (pack (val ++ " must be one of debit, credit")) "" "")
+--splitKindSet :: SplitRow -> String -> SplitRow
+--splitKindSet row val = case val of
+--    "credit" -> row & splitKind .~ (packSK "credit")
+--    "c" -> row & splitKind .~ (packSK "credit")
+--    "" -> row & splitKind .~ (packSK "credit")
+--    "debit" -> row & splitKind .~ (packSK "debit")
+--    "d" -> row & splitKind .~ (packSK "debit")
+--    _ ->   throw (SqlError "" NonfatalError (pack (val ++ " must be one of debit, credit")) "" "")
 
 splitKindAlens = AccLens
     splitKindGet
-    (Just splitKindSet)
+--    (Just splitKindSet)
+    True
     "kind"
 
-splitAmountSet row mval = case (readMaybe mval) of
-    Nothing -> throw (SqlError "" NonfatalError (pack ("cannot read " ++ mval)) "" "")
-    Just val -> row & splitAmount .~ val
+--splitAmountSet row mval = case (readMaybe mval) of
+--    Nothing -> throw (SqlError "" NonfatalError (pack ("cannot read " ++ mval)) "" "")
+--    Just val -> row & splitAmount .~ val
 
 splitAmountAlens = AccLens
     (\row -> show (row ^. splitAmount))
-    (Just splitAmountSet)
+--    (Just splitAmountSet)
+    True
     "amount"
 
 splitMemoGet :: SplitRow -> String
@@ -237,11 +338,12 @@ splitMemoGet row = case (row ^. splitMemo) of
     Nothing -> "None"
     Just val -> val
 
-splitMemoSet :: SplitRow -> String -> SplitRow
-splitMemoSet row "None" = row & splitMemo.~ Nothing
-splitMemoSet row val = row & splitMemo .~ (Just val)
+--splitMemoSet :: SplitRow -> String -> SplitRow
+--splitMemoSet row "None" = row & splitMemo.~ Nothing
+--splitMemoSet row val = row & splitMemo .~ (Just val)
 
 splitMemoAlens = AccLens
     splitMemoGet
-    (Just splitMemoSet)
+--    (Just splitMemoSet)
+    True
     "memo"

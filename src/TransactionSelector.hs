@@ -1,6 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE MultiWayIf #-}
 
 module TransactionSelector where
 
@@ -14,6 +15,7 @@ import Database.PostgreSQL.Simple.FromField
 import Database.PostgreSQL.Simple.ToField
 import Database.PostgreSQL.Simple.Types
 import Control.Lens
+import Control.Exception
 import SQLTypes
 
 -- transaction row type
@@ -25,6 +27,9 @@ data TransactionRow = TransactionRow {
     } deriving (Show)
 
 makeLenses ''TransactionRow
+
+instance Eq TransactionRow where
+    row1 == row2 = (row1 ^. transactionTid) == (row2 ^. transactionTid)
 
 instance FromRow TransactionRow where
    fromRow = TransactionRow <$> field <*> field <*> field
@@ -50,14 +55,24 @@ instance IOSelector SimpleIOSelector TransactionRow where
         res <- query_ conn queryString
         return (head res)
 
-    iosUpdate selector row = do
-        let conn = selector ^. selectorConnection
-        let queryString = Query (intercalate "\n" [
-                "UPDATE transactions SET date=?, description=?",
-                "WHERE tid=? RETURNING tid, date, description",
-                ";"
-                ])
-        res <- query conn queryString (row ^. transactionDate, row ^. transactionDescription, row ^. transactionTid)
+    iosUpdate selector row lens val = do
+        let conn = (selector ^. selectorConnection)
+        res <- if
+            | lens == transactionDateAlens -> do
+                let queryString = (Query (intercalate "\n" [
+                        "UPDATE transactions SET date=?",
+                        "WHERE tid=? RETURNING tid, date, description",
+                        ";"
+                        ]))
+                query conn queryString (val, row ^. transactionTid)
+            | lens == transactionDescriptionAlens -> do
+                let queryString = (Query (intercalate "\n" [
+                        "UPDATE transactions SET description=?",
+                        "WHERE tid=? RETURNING tid, date, description",
+                        ";"
+                        ]))
+                query conn queryString (val, row ^. transactionTid)
+            | otherwise -> throw (SqlError "" NonfatalError (pack "This field cannot be updated.") "" "")
         return (head res)
 
     iosDelete selector row = do
@@ -74,15 +89,18 @@ transactionAlenses = [transactionTidAlens, transactionDateAlens, transactionDesc
 
 transactionTidAlens = AccLens
     (\row -> show (row ^. transactionTid))
-    Nothing
+--    Nothing
+    False
     "tid"
 
 transactionDateAlens = AccLens
     (\row -> (unpackDK $ row ^. transactionDate))
-    (Just (\row val -> row & transactionDate .~ (packDK val)))
+--    (Just (\row val -> row & transactionDate .~ (packDK val)))
+    True
     "date"
 
 transactionDescriptionAlens = AccLens
     (\row -> (row ^. transactionDescription))
-    (Just (\row val -> row & transactionDescription .~ val))
+--    (Just (\row val -> row & transactionDescription .~ val))
+    True
     "description"

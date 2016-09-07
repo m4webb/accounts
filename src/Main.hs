@@ -2,6 +2,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 module Main where
 
@@ -44,6 +45,12 @@ import SQLTypes
 
 -- TODO: virtual accounts
 
+-- TODO: get rid of (head res), throw FatalError instead
+
+-- IN PROGRESS: No monolithic setting in IOSelector, rather take AccLens as param and set just that field
+
+--     Accounts and Transactions done; Splits and Statements remain
+
 instance MonadThrow Curses where
     throwM e = Curses (throwIO e)
 
@@ -68,20 +75,23 @@ data CoreState = CoreState {
 
 makeLenses ''CoreState
 
-data ProjectionPair ios1 row1 row2 scopeType = ProjectionPair {
+data ProjectionPair ios1 row1 ios2 row2 = ProjectionPair {
     _pairParent :: Projection ios1 row1,
-    _pairChild :: Projection (ScopedIOSelector scopeType) row2,
+    _pairChild :: Projection ios2 row2,
     _pairParentActive :: Bool,
     _pairChildRatio :: Int
     }
 
 makeLenses ''ProjectionPair
 
-instance IDAble TransactionRow where
-    getID row = row ^. transactionTid
+instance Scopeable TransactionRow Int where
+    getScope row scope = row ^. transactionTid
 
-instance IDAble AccountRow where
-    getID row = row ^. account_aid
+instance Scopeable AccountRow Int where
+    getScope row scope = row ^. account_aid
+
+instance Scopeable AccountRow StatementScope where
+    getScope row scope = scope & statementScopeAid .~ (row ^. account_aid)
 
 type CursesInput = String -> Curses (Maybe String)
 
@@ -112,6 +122,7 @@ instance App CoreState where
 
     appHandleEvent core event input = do
         case event of
+            EventCharacter 's' -> return $ Just (core & coreBasicState .~ BasicStateSelect)
             EventCharacter 'r' -> return $ Just (core & coreBasicState .~ BasicStateRollback)
             EventCharacter 'c' -> return $ Just (core & coreBasicState .~ BasicStateCommit)
             EventCharacter 'q' -> return $ Just (core & coreBasicState .~ BasicStateQuit)
@@ -120,7 +131,7 @@ instance App CoreState where
 
     appSelect core = return core
 
-instance (IOSelector ios row) => App (Projection ios row) where
+instance (IOSelector ios row, Eq row) => App (Projection ios row) where
     appInitWindows proj = do
         max_y <- fmap (fromInteger . fst) screenSize
         max_x <- fmap (fromInteger . snd) screenSize
@@ -138,8 +149,8 @@ instance (IOSelector ios row) => App (Projection ios row) where
 minimumLO1DrawSize = 8
 mLDS = 8
 
-instance (IOSelector ios1 row1, IOSelector (ScopedIOSelector Int) row2, IDAble row1) =>
-            App (ProjectionPair ios1 row1 row2 Int) where
+instance (IOSelector ios1 row1, IOSelector (ScopedIOSelector scopeType) row2, Scopeable row1 scopeType, Eq row1, Eq row2) =>
+            App (ProjectionPair ios1 row1 (ScopedIOSelector scopeType) row2) where
     appInitWindows pair = do
         max_y <- fmap (fromInteger . fst) screenSize
         max_x <- fmap (fromInteger . snd) screenSize
@@ -185,7 +196,7 @@ i1HandleEvent a event input = do
         EventCharacter 'j' -> liftIO $ fmap Just (i1_down a)
         EventCharacter 'h' -> liftIO $ fmap Just (i1_left a)
         EventCharacter 'l' -> liftIO $ fmap Just (i1_right a)
-        EventCharacter 's' -> liftIO $ fmap Just (i1_select a)
+        --EventCharacter 's' -> liftIO $ fmap Just (i1_select a)
         EventCharacter 'i' -> liftIO $ fmap Just (i1_insert a)
         EventCharacter 'u' -> do
             maybeUpdateStr <- input "New value?"
@@ -206,14 +217,19 @@ i1HandleEvent a event input = do
         _ -> return Nothing
 
 pairSelectChild pair = do
+    let currentScope = pair ^. pairChild ^. proj_ios ^. scopedScope
     let maybeParentRow = safeCursor ((getLO1 (pair ^. pairParent)) ^. lo1_zip_row)
-    let scopeId = case maybeParentRow of
-            Just row -> getID row
-            Nothing -> -1
-    let newPairChild1 = pair ^. pairChild & proj_ios . scopedScope .~ scopeId
-    newPairChild2 <- liftIO $ i1_select newPairChild1
-    let newPair = pair & pairChild .~ newPairChild2
-    return newPair
+    let maybeScope = case maybeParentRow of
+            Just row -> Just (getScope row currentScope)
+            Nothing -> Nothing
+    case maybeScope of 
+        Just scope -> do
+            let newPairChild1 = pair ^. pairChild & proj_ios . scopedScope .~ scope
+            newPairChild2 <- liftIO $ i1_select newPairChild1
+            let newPair = pair & pairChild .~ newPairChild2
+            return newPair
+        Nothing ->
+            return pair
 
 data BigState a = BigState {
     _coreApp :: CoreState,
@@ -230,9 +246,10 @@ accountProj conn = Projection (SimpleIOSelector conn) (lO1FromAlenses account_al
 transactionProj conn = Projection  (SimpleIOSelector conn) (lO1FromAlenses transactionAlenses)
 splitProj conn = Projection (SimpleIOSelector conn) (lO1FromAlenses splitAlenses)
 splitScopedProj conn = Projection (ScopedIOSelector conn (3::Int)) (lO1FromAlenses splitScopedAlenses)
-transactionSplitProj conn = ProjectionPair (transactionProj conn) (splitScopedProj conn) True 30
-statementProj conn = Projection (ScopedIOSelector conn (2::Int)) (lO1FromAlenses statementAlenses)
-accountStatementProj conn = ProjectionPair (accountProj conn) (statementProj conn) True 70
+transactionSplitProj conn = ProjectionPair (transactionProj conn) (splitScopedProj conn) True 50
+statementProjInitialScope = StatementScope 2 (DateKind "2016-01-01") (DateKind "2017-01-01")
+statementProj conn = Projection (ScopedIOSelector conn statementProjInitialScope) (lO1FromAlenses statementAlenses)
+accountStatementProj conn = ProjectionPair (accountProj conn) (statementProj conn) True 60
 
 -- sql
 
@@ -269,17 +286,18 @@ main = do
         colorWhiteID <- newColorID ColorWhite ColorDefault 5
         let colors = Colors colorRedID colorYellowID colorBlueID colorWhiteID
         let coreApp_ = CoreState conn colors "" BasicStateSelect
-        let mainApp_ = accountProj conn
+        let mainApp_ = accountStatementProj conn
         coreWindows_ <- appInitWindows coreApp_
         mainWindows_ <- appInitWindows mainApp_
         let bigState = BigState coreApp_ coreWindows_ mainApp_ mainWindows_
         mainLoop bigState
 
+changeMainApp :: (App a, App b) => BigState a -> b -> Curses (BigState b)
 changeMainApp state newMainApp = do
     foldl (>>) (return ()) (fmap closeWindow (state ^. mainWindows))
     newMainWindows <- appInitWindows newMainApp
     let newCoreApp = (state ^. coreApp) & coreBasicState .~ BasicStateSelect
-    mainLoop $ BigState newCoreApp (state ^. coreWindows) newMainApp newMainWindows
+    return (BigState newCoreApp (state ^. coreWindows) newMainApp newMainWindows)
 
 mainLoop :: App a => BigState a -> Curses ()
 mainLoop state = do
@@ -288,26 +306,29 @@ mainLoop state = do
         BasicStateSelect -> do
             liftIO $ begin (core ^. coreConnection)
             let newState1 = state & coreApp . coreBasicState .~ BasicStateNormal
-            newState2 <- newState1 & mainApp %%~ appSelect
-            mainLoop newState2
+            let newState2 = newState1 & coreApp . coreStatus .~ "Select."
+            newState3 <- newState2 & mainApp %%~ appSelect
+            mainLoop newState3
         BasicStateCommit -> do
             newCoreApp <- catch (commitUnsafe core) (handleSqlErrorCore core)
             mainLoop (state & coreApp .~ newCoreApp)
         BasicStateRollback -> do
             liftIO $ rollback (core ^. coreConnection)
-            let newState1= state & coreApp . coreBasicState .~ BasicStateSelect
+            liftIO $ begin (core ^. coreConnection)
+            let newState1 = state & coreApp . coreBasicState .~ BasicStateNormal
             let newState2 = newState1 & coreApp . coreStatus .~ "Rollback."
-            mainLoop newState2
+            newState3 <- newState2 & mainApp %%~ appSelect
+            mainLoop newState3
         BasicStateNormal -> do
             appDraw (state ^. coreApp) (state ^. coreWindows) (core ^. coreColors)
             appDraw (state ^. mainApp) (state ^. mainWindows) (core ^. coreColors)
             render
             event <- getEvent (head $ state ^. coreWindows) Nothing
             case event of
-                Just (EventCharacter '1') -> changeMainApp state (accountStatementProj (core ^. coreConnection))
-                Just (EventCharacter '2') -> changeMainApp state (transactionSplitProj (core ^. coreConnection))
-                Just (EventCharacter '3') -> changeMainApp state (transactionProj (core ^. coreConnection))
-                Just (EventCharacter '4') -> changeMainApp state (splitProj (core ^. coreConnection))
+                Just (EventCharacter '1') -> (changeMainApp state (accountStatementProj (core ^. coreConnection))) >>= mainLoop
+                Just (EventCharacter '2') -> (changeMainApp state (transactionSplitProj (core ^. coreConnection))) >>= mainLoop
+                Just (EventCharacter '3') -> (changeMainApp state (transactionProj (core ^. coreConnection))) >>= mainLoop
+                Just (EventCharacter '4') -> (changeMainApp state (splitProj (core ^. coreConnection))) >>= mainLoop
                 Nothing -> mainLoop state
                 Just event -> do
                     let input = getString (head $ state ^. coreWindows) 0 2

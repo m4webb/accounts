@@ -10,11 +10,14 @@ import Filter
 
 -- Accounts core API
 
--- AccLens - Accounts Lens
+-- Special relationship between AccLens and IOSelector in the alens_can_set field,
+-- because IOSelector cannot communicate through lo1. An AccLens needs to know if
+-- it can be updated or not, though the IOSelector actually implements the update.
 
 data AccLens row = AccLens {
     _alens_get :: row -> String,
-    _alens_set :: Maybe (row -> String -> row),
+    _alens_can_set :: Bool,
+    --_alens_set :: Maybe (row -> String -> row),
     _alens_name :: String
     }
 
@@ -23,6 +26,12 @@ makeLenses ''AccLens
 instance Eq (AccLens row) where
     (==) a b = (a ^. alens_name) == (b ^. alens_name)
     (/=) a b = (a ^. alens_name) /= (b ^. alens_name)
+
+class IOSelector a row where
+    iosSelect :: a -> IO [row]
+    iosInsert :: a -> IO row
+    iosUpdate :: a -> row -> AccLens row -> String -> IO row
+    iosDelete :: a -> row -> IO ()
 
 class I1 a where 
     i1_select :: a -> IO a
@@ -54,12 +63,6 @@ class HasLO1 a where
 --    _ios_delete :: Connection -> row -> IO ()
 --    }
 
-class IOSelector a row where
-    iosSelect :: a -> IO [row]
-    iosInsert :: a -> IO row
-    iosUpdate :: a -> row -> IO row
-    iosDelete :: a -> row -> IO ()
-
 data SimpleIOSelector = SimpleIOSelector {
     _selectorConnection :: Connection
     }
@@ -73,7 +76,6 @@ data ScopedIOSelector a = ScopedIOSelector {
 
 makeLenses ''ScopedIOSelector
 
-class IDAble a where
-    getID :: a -> Int
-
+class Scopeable a b where
+    getScope :: a -> b -> b
 

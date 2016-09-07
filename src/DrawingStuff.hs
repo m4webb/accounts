@@ -163,9 +163,9 @@ drawLO1 w colors lo1 active = updateWindow w $ do
                     case maybeCurrentAlens of
                         Nothing -> return ()
                         Just currentAlens -> do
-                            let color = case (currentAlens ^. alens_set) of
-                                    Just _ -> colors ^. colorRed
-                                    Nothing -> colors ^. colorYellow
+                            let color = case (currentAlens ^. alens_can_set) of
+                                    True -> colors ^. colorRed
+                                    False -> colors ^. colorYellow
                             setColor color
                             let qq0 = [(lens, x) | (lens, x) <- zip (toList $ lo1 ^. lo1_zip_lens) strStarts]
                             let qq1 = filter (\(lens, x) -> lens == (cursor (lo1 ^. lo1_zip_lens))) qq0
