@@ -33,23 +33,21 @@ import SQLTypes
 
 -- TODO: Confirm quit, rollback, commit
 
--- TODO: Child height ratio field in ProjectionPair
-
 -- TODO: Bulk upload scripts
 
 -- TODO: Overlaid accounts?
+
+-- TODO: virtual accounts
 
 -- TODO: SQL syntax data types?
 
 -- TODO: can FromRow / ToRow use column names, or just position?
 
--- TODO: virtual accounts
-
 -- TODO: get rid of (head res), throw FatalError instead
 
--- IN PROGRESS: No monolithic setting in IOSelector, rather take AccLens as param and set just that field
+-- TODO: allow fuzzy account setting
 
---     Accounts and Transactions done; Splits and Statements remain
+-- TODO: include (uneditable) balance in AccountRow
 
 instance MonadThrow Curses where
     throwM e = Curses (throwIO e)
@@ -85,13 +83,15 @@ data ProjectionPair ios1 row1 ios2 row2 = ProjectionPair {
 makeLenses ''ProjectionPair
 
 instance Scopeable TransactionRow Int where
-    getScope row scope = row ^. transactionTid
+    getMaybeScope row maybeScope = Just $ row ^. transactionTid
 
 instance Scopeable AccountRow Int where
-    getScope row scope = row ^. account_aid
+    getMaybeScope row maybeScope = Just $ row ^. account_aid
 
 instance Scopeable AccountRow StatementScope where
-    getScope row scope = scope & statementScopeAid .~ (row ^. account_aid)
+    getMaybeScope row maybeScope = case maybeScope of
+        Just scope -> Just (scope & statementScopeAid .~ (row ^. account_aid))
+        Nothing -> Nothing
 
 type CursesInput = String -> Curses (Maybe String)
 
@@ -217,19 +217,15 @@ i1HandleEvent a event input = do
         _ -> return Nothing
 
 pairSelectChild pair = do
-    let currentScope = pair ^. pairChild ^. proj_ios ^. scopedScope
+    let currentMaybeScope = pair ^. pairChild ^. proj_ios ^. scopedMaybeScope
     let maybeParentRow = safeCursor ((getLO1 (pair ^. pairParent)) ^. lo1_zip_row)
-    let maybeScope = case maybeParentRow of
-            Just row -> Just (getScope row currentScope)
+    let newMaybeScope = case maybeParentRow of
+            Just row -> getMaybeScope row currentMaybeScope
             Nothing -> Nothing
-    case maybeScope of 
-        Just scope -> do
-            let newPairChild1 = pair ^. pairChild & proj_ios . scopedScope .~ scope
-            newPairChild2 <- liftIO $ i1_select newPairChild1
-            let newPair = pair & pairChild .~ newPairChild2
-            return newPair
-        Nothing ->
-            return pair
+    let newPairChild1 = pair ^. pairChild & proj_ios . scopedMaybeScope .~ newMaybeScope
+    newPairChild2 <- liftIO $ i1_select newPairChild1
+    let newPair = pair & pairChild .~ newPairChild2
+    return newPair
 
 data BigState a = BigState {
     _coreApp :: CoreState,
@@ -245,9 +241,9 @@ lO1FromAlenses alenses = LO1 (fromList []) (fromList alenses) (fromList [])
 accountProj conn = Projection (SimpleIOSelector conn) (lO1FromAlenses account_alenses)
 transactionProj conn = Projection  (SimpleIOSelector conn) (lO1FromAlenses transactionAlenses)
 splitProj conn = Projection (SimpleIOSelector conn) (lO1FromAlenses splitAlenses)
-splitScopedProj conn = Projection (ScopedIOSelector conn (3::Int)) (lO1FromAlenses splitScopedAlenses)
+splitScopedProj conn = Projection (ScopedIOSelector conn (Just 3::Maybe Int)) (lO1FromAlenses splitScopedAlenses)
 transactionSplitProj conn = ProjectionPair (transactionProj conn) (splitScopedProj conn) True 50
-statementProjInitialScope = StatementScope 2 (DateKind "2016-01-01") (DateKind "2017-01-01")
+statementProjInitialScope = Just (StatementScope 2 (DateKind "2016-01-01") (DateKind "2017-01-01"))
 statementProj conn = Projection (ScopedIOSelector conn statementProjInitialScope) (lO1FromAlenses statementAlenses)
 accountStatementProj conn = ProjectionPair (accountProj conn) (statementProj conn) True 60
 
@@ -266,11 +262,14 @@ handleSqlErrorCore core error = do
 handleSqlErrorState state error = do
     state & coreApp %%~ (\core -> handleSqlErrorCore core error)
 
-commitUnsafe core = do
+commitUnsafe state = do
+    let core = state ^. coreApp
     liftIO $ commit (core ^. coreConnection)
-    let newCore1 = core & coreBasicState .~ BasicStateSelect
-    let newCore2 = newCore1 & coreStatus .~ "Commit."
-    return newCore2
+    liftIO $ begin (core ^. coreConnection)
+    let newState1 = state & coreApp . coreBasicState .~ BasicStateNormal
+    let newState2 = newState1 & coreApp . coreStatus .~ "Commit."
+    newState3 <- newState2 & mainApp %%~ appSelect
+    return newState3
 
 -- main
 
@@ -310,8 +309,8 @@ mainLoop state = do
             newState3 <- newState2 & mainApp %%~ appSelect
             mainLoop newState3
         BasicStateCommit -> do
-            newCoreApp <- catch (commitUnsafe core) (handleSqlErrorCore core)
-            mainLoop (state & coreApp .~ newCoreApp)
+            newState <- catch (commitUnsafe state) (handleSqlErrorState state)
+            mainLoop newState
         BasicStateRollback -> do
             liftIO $ rollback (core ^. coreConnection)
             liftIO $ begin (core ^. coreConnection)
@@ -327,8 +326,6 @@ mainLoop state = do
             case event of
                 Just (EventCharacter '1') -> (changeMainApp state (accountStatementProj (core ^. coreConnection))) >>= mainLoop
                 Just (EventCharacter '2') -> (changeMainApp state (transactionSplitProj (core ^. coreConnection))) >>= mainLoop
-                Just (EventCharacter '3') -> (changeMainApp state (transactionProj (core ^. coreConnection))) >>= mainLoop
-                Just (EventCharacter '4') -> (changeMainApp state (splitProj (core ^. coreConnection))) >>= mainLoop
                 Nothing -> mainLoop state
                 Just event -> do
                     let input = getString (head $ state ^. coreWindows) 0 2

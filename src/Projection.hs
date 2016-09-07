@@ -63,7 +63,7 @@ instance (IOSelector ios row, Eq row) => I1 (Projection ios row) where
             Nothing -> return self
             Just curr_row -> do
                 iosDelete (self ^. proj_ios) curr_row
-                return $ self & proj_zip_row %~ pop . right
+                return $ self & proj_zip_row %~ rightCheck . pop . right
 
     i1_set_filters self filters = return $ self & proj_lo1 . lo1_zip_filters .~ fromList filters
 

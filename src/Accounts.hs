@@ -71,11 +71,11 @@ makeLenses ''SimpleIOSelector
 
 data ScopedIOSelector a = ScopedIOSelector {
     _scopedConnection :: Connection,
-    _scopedScope :: a
+    _scopedMaybeScope :: Maybe a
     }
 
 makeLenses ''ScopedIOSelector
 
 class Scopeable a b where
-    getScope :: a -> b -> b
+    getMaybeScope :: a -> Maybe b -> Maybe b
 

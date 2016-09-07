@@ -77,8 +77,10 @@ instance IOSelector SimpleIOSelector TransactionRow where
 
     iosDelete selector row = do
         let conn = selector ^. selectorConnection
-        let queryString = "DELETE FROM transactions WHERE tid=?;"
-        execute conn queryString (Only (row ^. transactionTid))
+        let deleteSplitsQueryFmt = "DELETE FROM splits WHERE tid=?;"
+        let deleteTransactionQueryFmt = "DELETE FROM transactions WHERE tid=?;"
+        execute conn deleteSplitsQueryFmt (Only (row ^. transactionTid))
+        execute conn deleteTransactionQueryFmt (Only (row ^. transactionTid))
         return ()
 
 -- AccLens

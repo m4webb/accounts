@@ -65,8 +65,8 @@ statementSelectQueryFmt = Query "\n\
 \    a.counter,\n\
 \    a.description\n\
 \ORDER BY\n\
-\    a.date,\n\
-\    a.sid\n\
+\    a.date DESC,\n\
+\    a.sid DESC\n\
 \;"
 
 statementSelectSingleQueryFmt = Query "\n\
@@ -128,6 +128,6 @@ statementSelectSingleQueryFmt = Query "\n\
 \    a.counter,\n\
 \    a.description\n\
 \ORDER BY\n\
-\    a.date,\n\
-\    a.sid\n\
+\    a.date DESC,\n\
+\    a.sid DESC\n\
 \;"

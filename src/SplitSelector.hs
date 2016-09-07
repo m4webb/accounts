@@ -161,38 +161,44 @@ instance IOSelector SimpleIOSelector SplitRow where
 
 instance IOSelector (ScopedIOSelector Int) SplitRow where
     iosSelect scoped = do
-        let tid = scoped ^. scopedScope
-        let conn = scoped ^. scopedConnection
-        let selectQueryStrFmt = Query (intercalate "\n" [
-                "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
-                "FROM splits s",
-                "INNER JOIN accounts a on s.aid = a.aid",
-                "WHERE s.tid=?",
-                "ORDER BY s.tid, s.kind DESC",
-                ";"
-                ])
-        query conn selectQueryStrFmt [tid]
+        let maybeTid = scoped ^. scopedMaybeScope
+        case maybeTid of
+            Just tid -> do
+                let conn = scoped ^. scopedConnection
+                let selectQueryStrFmt = Query (intercalate "\n" [
+                        "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
+                        "FROM splits s",
+                        "INNER JOIN accounts a on s.aid = a.aid",
+                        "WHERE s.tid=?",
+                        "ORDER BY s.tid, s.kind DESC",
+                        ";"
+                        ])
+                query conn selectQueryStrFmt [tid]
+            Nothing -> return []
 
     iosInsert scoped = do
-        let tid = scoped ^. scopedScope
-        let conn = scoped ^. scopedConnection
-        let insertQueryStrFmt = Query (intercalate "\n" [
-                "INSERT INTO splits (tid, aid, kind, amount)",
-                "VALUES (?, (SELECT MIN(aid) from accounts), 'debit', 0)",
-                "RETURNING sid",
-                ";"
-                ])
-        let selectQueryStrFmt = (Query (intercalate "\n" [
-                "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
-                "FROM splits s",
-                "INNER JOIN accounts a on s.aid = a.aid",
-                "WHERE s.sid=?",
-                "ORDER BY s.tid, s.kind DESC",
-                ";"
-                ]))
-        [Only sid] <- query conn insertQueryStrFmt [tid] :: IO [Only Int]
-        [res] <- query conn selectQueryStrFmt [sid]
-        return res
+        let maybeTid = scoped ^. scopedMaybeScope
+        case maybeTid of
+            Just tid -> do
+                let conn = scoped ^. scopedConnection
+                let insertQueryStrFmt = Query (intercalate "\n" [
+                        "INSERT INTO splits (tid, aid, kind, amount)",
+                        "VALUES (?, (SELECT MIN(aid) from accounts), 'debit', 0)",
+                        "RETURNING sid",
+                        ";"
+                        ])
+                let selectQueryStrFmt = (Query (intercalate "\n" [
+                        "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
+                        "FROM splits s",
+                        "INNER JOIN accounts a on s.aid = a.aid",
+                        "WHERE s.sid=?",
+                        "ORDER BY s.tid, s.kind DESC",
+                        ";"
+                        ]))
+                [Only sid] <- query conn insertQueryStrFmt [tid] :: IO [Only Int]
+                [res] <- query conn selectQueryStrFmt [sid]
+                return res
+            Nothing -> throw (SqlError "" NonfatalError (pack "cannot insert with no scope") "" "")
 
     iosUpdate scoped row lens val = do
         let conn = (scoped ^. scopedConnection)
