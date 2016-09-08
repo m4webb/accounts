@@ -80,7 +80,7 @@ drawError = do
 
 inmap fns args = [f a | (f, a) <- zip fns args]
 
-maxLength = 35
+maxLength = 45
 
 drawGlyphPos glyph (y, x) = do
     moveCursor y x

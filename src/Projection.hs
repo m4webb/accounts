@@ -43,7 +43,7 @@ instance (IOSelector ios row, Eq row) => I1 (Projection ios row) where
 
     i1_insert self = do
         new_row <- iosInsert (self ^. proj_ios)
-        return $ self & proj_zip_row %~ (insert new_row . end)
+        return $ self & proj_zip_row %~ (insert new_row . start)
 
     i1_update self value = do
         let m_curr_row = safeCursor (self ^. (proj_lo1 . lo1_zip_row))
@@ -71,8 +71,16 @@ instance (IOSelector ios row, Eq row) => I1 (Projection ios row) where
 
     i1_up self = return $ self & proj_zip_row %~ left
 
+    i1_up_alot self = return $ self & proj_zip_row %~ left . left . left . left . left . left . left . left . left . left
+
     i1_down self = return $ self & proj_zip_row %~ rightCheck . right
+
+    i1_down_alot self = return $ self & proj_zip_row %~ rightCheck . right . right . right . right . right . right . right . right . right . right
 
     i1_left self = return $ self & proj_zip_lens %~ left
 
     i1_right self = return $ self & proj_zip_lens %~ rightCheck . right
+
+    i1_start self = return $ self & proj_zip_row %~ start
+
+    i1_end self = return $ self & proj_zip_row %~ rightCheck . end 

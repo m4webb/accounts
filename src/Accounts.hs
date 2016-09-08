@@ -41,7 +41,11 @@ class I1 a where
     i1_set_filters :: a -> [Filter] -> IO a
     i1_reset_filters :: a -> IO a
     i1_up :: a -> IO a
+    i1_up_alot :: a -> IO a
     i1_down :: a -> IO a
+    i1_down_alot :: a -> IO a
+    i1_start :: a -> IO a
+    i1_end :: a -> IO a
     i1_left :: a -> IO a
     i1_right :: a -> IO a
 

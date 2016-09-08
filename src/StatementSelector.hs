@@ -96,7 +96,6 @@ instance IOSelector (ScopedIOSelector StatementScope) StatementRow where
                     [Only aid] -> do
                         execute conn updateAccountQueryFmt (aid, sid)
                     _ -> throw (SqlError "" NonfatalError (pack ("no account named " ++ val)) "" "")
-
             | lens == stmtCounterAlens -> do
                 let getAccountAidQueryFmt = Query "SELECT aid FROM accounts WHERE name=?;"
                 let checkCounterQueryFmt = (Query (intercalate "\n" [
@@ -124,6 +123,27 @@ instance IOSelector (ScopedIOSelector StatementScope) StatementRow where
                                 execute conn updateCounterQueryFmt (counterAid, sid)
                             _ -> throw (SqlError "" NonfatalError (pack ("No account named " ++ (row ^. statementCounter))) "" "")
                     _ -> throw (SqlError "" NonfatalError (pack "Cannot update counter on split transactions.") "" "")
+            | lens == stmtAmountAlens -> do
+                let checkCounterQueryFmt = (Query (intercalate "\n" [
+                        "SELECT s2.sid FROM splits s",
+                        "LEFT JOIN transactions t ON s.sid = t.tid",
+                        "LEFT JOIN splits s2 ON s.kind != s2.kind AND s.tid = s2.tid",
+                        "WHERE s.sid = ?",
+                        ";"
+                        ]))
+                let updateAmountQueryFmt = (Query (intercalate "\n" [
+                        "UPDATE splits SET amount=?",
+                        "WHERE tid IN (SELECT tid FROM splits WHERE sid=?)",
+                        ";"
+                        ]))
+                counterCheck <- query conn checkCounterQueryFmt (Only sid) :: IO [Only Int]
+                case (length counterCheck) of
+                    1 -> do
+                        case (readMaybe val :: Maybe Scientific) of
+                            Nothing -> throw (SqlError "" NonfatalError (pack ("cannot read " ++ val)) "" "")
+                            Just readVal -> do
+                                execute conn updateAmountQueryFmt (readVal, sid)
+                    _ -> throw (SqlError "" NonfatalError (pack "Cannot update amount on split transactions.") "" "")
             | otherwise -> throw (SqlError "" NonfatalError (pack "Cannot update field.") "" "")
         res <- query conn statementSelectSingleQueryFmt (Only sid)
         case res of
@@ -209,7 +229,7 @@ stmtKindAlens = AccLens
 stmtAmountAlens = AccLens
     (\row -> show (row ^. statementAmount))
 --    Nothing
-    False
+    True
     "amount"
 
 stmtAccountAlens = AccLens

@@ -40,7 +40,7 @@ instance IOSelector SimpleIOSelector TransactionRow where
     iosSelect selector = query_ (selector ^. selectorConnection) (Query (intercalate "\n" [
         "SELECT tid, date, description",
         "FROM transactions",
-        "ORDER BY date",
+        "ORDER BY date DESC",
         ";"
         ]))
 

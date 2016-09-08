@@ -49,6 +49,8 @@ import SQLTypes
 
 -- TODO: include (uneditable) balance in AccountRow
 
+-- TODO: left box color scrollbar indicator?
+
 instance MonadThrow Curses where
     throwM e = Curses (throwIO e)
 
@@ -193,9 +195,13 @@ instance (IOSelector ios1 row1, IOSelector (ScopedIOSelector scopeType) row2, Sc
 i1HandleEvent a event input = do
     case event of
         EventCharacter 'k' -> liftIO $ fmap Just (i1_up a)
+        EventCharacter 'K' -> liftIO $ fmap Just (i1_up_alot a)
         EventCharacter 'j' -> liftIO $ fmap Just (i1_down a)
+        EventCharacter 'J' -> liftIO $ fmap Just (i1_down_alot a)
         EventCharacter 'h' -> liftIO $ fmap Just (i1_left a)
         EventCharacter 'l' -> liftIO $ fmap Just (i1_right a)
+        EventCharacter 'g' -> liftIO $ fmap Just (i1_start a)
+        EventCharacter 'G' -> liftIO $ fmap Just (i1_end a)
         --EventCharacter 's' -> liftIO $ fmap Just (i1_select a)
         EventCharacter 'i' -> liftIO $ fmap Just (i1_insert a)
         EventCharacter 'u' -> do
