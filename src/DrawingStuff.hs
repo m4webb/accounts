@@ -21,7 +21,8 @@ data Colors = Colors {
     _colorRed :: ColorID,
     _colorYellow :: ColorID,
     _colorBlue :: ColorID,
-    _colorWhite :: ColorID
+    _colorWhite :: ColorID,
+    _colorGreen :: ColorID
     }
 
 makeLenses ''Colors
@@ -127,7 +128,23 @@ applyZipperY (Zip ls (curs:rs)) cursor_start max_y = Zip [fmaparg a r | (r, a) <
 
 applyZipperX z xs = fmap (\r -> [f x | (f, x) <- (zip r xs)]) z
 
-drawLO1 w colors lo1 active = updateWindow w $ do
+trimLengths limit add lengths = let
+    maxLen = foldl max 0 lengths
+    totalWidth = (length lengths) * add + (foldl (+) 0 lengths)
+    in case totalWidth > limit of
+        True -> trimLengths limit add (fmap (min (maxLen - 1)) lengths)
+        False -> lengths
+
+data LO1DrawContext = LO1DrawContext {
+    _lo1dcNormalColor :: Colors -> ColorID,
+    _lo1dcGridColor :: Colors -> ColorID,
+    _lo1dcCanSetColor :: Colors -> ColorID,
+    _lo1dcCannotSetColor :: Colors -> ColorID
+    }
+
+makeLenses ''LO1DrawContext
+
+drawLO1 w colors context lo1 = updateWindow w $ do
     clear
     max_y <- fmap fst windowSize
     max_x <- fmap snd windowSize
@@ -143,42 +160,38 @@ drawLO1 w colors lo1 active = updateWindow w $ do
             let row_lengths = fmap (fmap (max . length)) row_strings_list
             let maxs = foldr inmap lens_lengths row_lengths
             let lengths = fmap (min maxLength) maxs
-            let row_strings_clipped = fmap (inmap (fmap clipString lengths)) row_strings
+            let trimmedLengths = trimLengths (fromInteger max_x - 1) 3 lengths
+            let row_strings_clipped = fmap (inmap (fmap clipString trimmedLengths)) row_strings
+            let lens_strings_clipped = inmap (fmap clipString trimmedLengths) lens_strings
             let gridRows = [0, n_above + 1, n_above + 4, max_y - 2]
-            let gridColsWidths = fmap (+ 3) lengths
-            let gridColsInts = fmap (\b -> (foldl (+) 0 (take b gridColsWidths))) [0..(length  lengths)]
+            let gridColsWidths = fmap (+ 3) trimmedLengths
+            let gridColsInts = fmap (\b -> (foldl (+) 0 (take b gridColsWidths))) [0..(length  trimmedLengths)]
             let gridCols = (fmap toInteger gridColsInts) ++ [max_x - 1]
             let strStarts = [x+2 | x <- gridCols]
             let w2 = fmap (fmap drawStringPos) row_strings_clipped
             let w3 = applyZipperY w2 (quot max_y 2) max_y
             let w4 = applyZipperX w3 strStarts
+            setColor $ (context ^. lo1dcGridColor) colors
             drawGrid gridRows gridCols
-            let q1 = fmap drawStringPos lens_strings
+            let q1 = fmap drawStringPos lens_strings_clipped
             let q2 = fmaparg ((quot max_y 2) - 1) q1
             let q3 = [f a | (f, a) <- (zip q2 strStarts)] 
+            setColor $ (context ^. lo1dcNormalColor) colors
             foldl (>>) (return ()) q3
-            case active of
-                True -> do
-                    let maybeCurrentAlens = safeCursor (lo1 ^. lo1_zip_lens)
-                    case maybeCurrentAlens of
-                        Nothing -> return ()
-                        Just currentAlens -> do
-                            let color = case (currentAlens ^. alens_can_set) of
-                                    True -> colors ^. colorRed
-                                    False -> colors ^. colorYellow
-                            setColor color
-                            let qq0 = [(lens, x) | (lens, x) <- zip (toList $ lo1 ^. lo1_zip_lens) strStarts]
-                            let qq1 = filter (\(lens, x) -> lens == (cursor (lo1 ^. lo1_zip_lens))) qq0
-                            let qq2 = fmap (\(lens, x) -> drawStringPos (lens ^. alens_name) ((quot max_y 2) - 1) x) qq1
-                            foldl (>>) (return ()) qq2
-                            setColor defaultColorID
-                False -> do
-                    setColor (colors ^. colorWhite)
+            let maybeCurrentAlens = safeCursor (lo1 ^. lo1_zip_lens)
+            case maybeCurrentAlens of
+                Nothing -> return ()
+                Just currentAlens -> do
+                    let color = case (currentAlens ^. alens_can_set) of
+                            True -> (context ^. lo1dcCanSetColor) colors
+                            False -> (context ^. lo1dcCannotSetColor) colors
+                    setColor color
                     let qq0 = [(lens, x) | (lens, x) <- zip (toList $ lo1 ^. lo1_zip_lens) strStarts]
                     let qq1 = filter (\(lens, x) -> lens == (cursor (lo1 ^. lo1_zip_lens))) qq0
                     let qq2 = fmap (\(lens, x) -> drawStringPos (lens ^. alens_name) ((quot max_y 2) - 1) x) qq1
                     foldl (>>) (return ()) qq2
                     setColor defaultColorID
+            setColor $ (context ^. lo1dcNormalColor) colors
             foldl (>>) (return ()) (toList (fmap (foldl (>>) (return ())) w4))
             --drawStringPos (clipString (fromInteger (max_x-3))
             --    ("Filter " ++ filtersToSql (toList (lo1 ^. lo1_zip_filters)))) (max_y-1) 2

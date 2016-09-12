@@ -43,7 +43,7 @@ instance (IOSelector ios row, Eq row) => I1 (Projection ios row) where
 
     i1_insert self = do
         new_row <- iosInsert (self ^. proj_ios)
-        return $ self & proj_zip_row %~ (insert new_row . start)
+        return $ self & proj_zip_row %~ (insert new_row)
 
     i1_update self value = do
         let m_curr_row = safeCursor (self ^. (proj_lo1 . lo1_zip_row))

@@ -99,7 +99,7 @@ instance IOSelector SimpleIOSelector AccountRow where
     iosSelect selector = query_ (selector ^. selectorConnection) (Query (intercalate "\n" [
         "SELECT aid, kind, name, description",
         "FROM accounts",
-        "ORDER BY name",
+        "ORDER BY kind, name",
         ";"
         ]))
 

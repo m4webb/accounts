@@ -29,17 +29,17 @@ import SQLTypes
 
 -- TODO: State monad
 
--- TODO: Bad filters can break program
+-- NA  : Bad filters can break program
 
--- TODO: Confirm quit, rollback, commit
+-- DONE: Confirm quit, rollback, commit
 
--- TODO: Bulk upload scripts
+-- DONE: Bulk upload scripts
 
--- TODO: Overlaid accounts?
+-- NA  : Overlaid accounts?
 
--- TODO: virtual accounts
+-- NA  : virtual accounts
 
--- TODO: SQL syntax data types?
+-- NA  : SQL syntax data types?
 
 -- TODO: can FromRow / ToRow use column names, or just position?
 
@@ -50,6 +50,28 @@ import SQLTypes
 -- TODO: include (uneditable) balance in AccountRow
 
 -- TODO: left box color scrollbar indicator?
+
+-- TODO: Trigger for dates to be contained within year?
+
+-- TODO: Select multiple rows and bulk update
+
+-- TODO: Update starts with current string? Maybe "U" does this?
+
+-- DONE: Make "sticky" scope toggleable; maybe just "peg" scope when desired, never changes when pegged
+
+-- TODO: Is inserting into a statement possible?
+
+-- TODO: Change color to indicate inserting? Hard to do, as window is not being updated
+
+-- TODO: Dynamically select col width, instead of max size
+
+-- TODO: Queries for Becky
+
+-- TODO: Ad hoc interfaces in Apps... is this bad?
+
+-- TODO: Do not draw if not enough horizontal room
+
+-- TODO: Make draw stuff good
 
 instance MonadThrow Curses where
     throwM e = Curses (throwIO e)
@@ -79,10 +101,26 @@ data ProjectionPair ios1 row1 ios2 row2 = ProjectionPair {
     _pairParent :: Projection ios1 row1,
     _pairChild :: Projection ios2 row2,
     _pairParentActive :: Bool,
-    _pairChildRatio :: Int
+    _pairChildRatio :: Int,
+    _pairChildLocked :: Bool
     }
 
 makeLenses ''ProjectionPair
+
+-- LO1 draw contexts
+
+--LO1DrawContext = LO1DrawContext {
+--    lo1dcNormalColor :: Colors -> ColorID,
+--    lo1dcGridColor :: Colors -> ColorID,
+--    lo1dcCanSetColor :: Colors -> ColorID,
+--    lo1dcCannotSetColor :: Colors -> ColorID
+--    }
+
+normalLO1Context = LO1DrawContext (view colorWhite) (view colorWhite) (view colorRed) (view colorYellow)
+activeLO1Context = LO1DrawContext (view colorWhite) (view colorGreen) (view colorRed) (view colorYellow)
+inactiveLO1Context = LO1DrawContext (view colorWhite) (view colorYellow) (view colorRed) (view colorYellow)
+activeLockedLO1Context = LO1DrawContext (view colorWhite) (view colorGreen) (view colorRed) (view colorYellow)
+inactiveLockedLO1Context = LO1DrawContext (view colorWhite) (view colorRed) (view colorRed) (view colorYellow)
 
 instance Scopeable TransactionRow Int where
     getMaybeScope row maybeScope = Just $ row ^. transactionTid
@@ -98,6 +136,12 @@ instance Scopeable AccountRow StatementScope where
 type CursesInput = String -> Curses (Maybe String)
 
 type Windows = [Window]
+
+confirmCommand input command alternative = do
+    maybeUpdateStr <- input
+    case maybeUpdateStr of
+        Just "yes" -> command
+        _ -> alternative
 
 class App a where
     appInitWindows :: a -> Curses Windows
@@ -124,11 +168,15 @@ instance App CoreState where
 
     appHandleEvent core event input = do
         case event of
-            EventCharacter 's' -> return $ Just (core & coreBasicState .~ BasicStateSelect)
-            EventCharacter 'r' -> return $ Just (core & coreBasicState .~ BasicStateRollback)
-            EventCharacter 'c' -> return $ Just (core & coreBasicState .~ BasicStateCommit)
-            EventCharacter 'q' -> return $ Just (core & coreBasicState .~ BasicStateQuit)
-            EventCharacter 'b' -> return $ Just (core & coreStatus .~ "")
+            EventCharacter 's' -> confirmCommand (input "Select?")
+                    (return (Just $ core & coreBasicState .~ BasicStateSelect)) (return (Just core))
+            EventCharacter 'r' -> confirmCommand (input "Rollback?")
+                    (return (Just $ core & coreBasicState .~ BasicStateRollback)) (return (Just core))
+            EventCharacter 'c' -> confirmCommand (input "Commit?")
+                    (return (Just $ core & coreBasicState .~ BasicStateCommit)) (return (Just core))
+            EventCharacter 'q' -> confirmCommand (input "Quit?")
+                    (return (Just $ core & coreBasicState .~ BasicStateQuit)) (return (Just core))
+            EventCharacter 'b' -> return (Just $ (core & coreStatus .~ ""))
             _ -> return Nothing
 
     appSelect core = return core
@@ -140,7 +188,7 @@ instance (IOSelector ios row, Eq row) => App (Projection ios row) where
         mainWindow <- newWindow (max_y - 4) (max_x - 2) 1 1
         return [mainWindow]
 
-    appDraw proj (window:_) colors = drawLO1 window colors (getLO1 proj) True
+    appDraw proj (window:_) colors = drawLO1 window colors normalLO1Context (getLO1 proj)
 
     appHandleEvent proj event input = do
         maybeNewProj <- i1HandleEvent proj event input
@@ -162,12 +210,23 @@ instance (IOSelector ios1 row1, IOSelector (ScopedIOSelector scopeType) row2, Sc
         return [parentWindow, childWindow]
 
     appDraw pair (parentWindow:childWindow:_) colors = do
-        drawLO1 parentWindow colors (getLO1 (pair ^. pairParent)) (pair ^. pairParentActive)
-        drawLO1 childWindow colors (getLO1 (pair ^. pairChild)) (not $ pair ^. pairParentActive)
+        case (pair ^. pairParentActive) of
+            True -> do
+                drawLO1 parentWindow colors activeLO1Context (getLO1 (pair ^. pairParent))
+                case (pair ^. pairChildLocked) of
+                    True -> drawLO1 childWindow colors inactiveLockedLO1Context (getLO1 (pair ^. pairChild))
+                    False -> drawLO1 childWindow colors inactiveLO1Context (getLO1 (pair ^. pairChild))
+            False -> do
+                drawLO1 parentWindow colors inactiveLO1Context (getLO1 (pair ^. pairParent))
+                case (pair ^. pairChildLocked) of
+                    True -> drawLO1 childWindow colors activeLockedLO1Context (getLO1 (pair ^. pairChild))
+                    False -> drawLO1 childWindow colors activeLO1Context (getLO1 (pair ^. pairChild))
 
     appHandleEvent pair event input = do
         case event of
             EventCharacter 'w' -> return (Just (pair & pairParentActive %~ not))
+            EventCharacter 'P' ->  return (Just (pair & pairChildLocked %~ not))
+            EventCharacter 'p' -> fmap Just (pairChangeChildScope pair)
             _ -> do
                 case (pair ^. pairParentActive) of
                     True -> do
@@ -175,8 +234,9 @@ instance (IOSelector ios1 row1, IOSelector (ScopedIOSelector scopeType) row2, Sc
                         case maybeNewPairParent of
                             Just newPairParent -> do
                                 let newPair1 = pair & pairParent .~ newPairParent
-                                newPair2 <- pairSelectChild newPair1
-                                return (Just newPair2)
+                                case pair ^. pairChildLocked of
+                                    True -> return (Just newPair1)
+                                    False -> fmap Just (pairChangeChildScope newPair1)
                             Nothing -> return Nothing
                     False -> do
                         maybeNewPairChild <- i1HandleEvent (pair ^. pairChild) event input
@@ -188,8 +248,9 @@ instance (IOSelector ios1 row1, IOSelector (ScopedIOSelector scopeType) row2, Sc
 
     appSelect pair = do
         newPairParent <- liftIO $ i1_select (pair ^. pairParent)
+        newPairChild <- liftIO $ i1_select (pair ^. pairChild)
         let newPair1 = pair & pairParent .~ newPairParent
-        newPair2 <- pairSelectChild newPair1
+        let newPair2 = newPair1 & pairChild .~ newPairChild
         return newPair2
 
 i1HandleEvent a event input = do
@@ -209,11 +270,7 @@ i1HandleEvent a event input = do
             case maybeUpdateStr of
                 Just updateStr -> liftIO $ fmap Just (i1_update a updateStr)
                 Nothing -> return $ Just a
-        EventCharacter 'd' -> do
-            maybeUpdateStr <- input "Delete?"
-            case maybeUpdateStr of
-                Just "yes" -> liftIO $ fmap Just (i1_delete a)
-                _ -> return $ Just a
+        EventCharacter 'd' -> confirmCommand (input "Delete?") (fmap Just (liftIO $ i1_delete a)) (return (Just a))
         --EventCharacter 'f' -> do
         --    maybeFilterStr <- input "Filters (CAREFUL!)?"
         --    case maybeFilterStr of
@@ -222,7 +279,7 @@ i1HandleEvent a event input = do
         --EventCharacter 'F' -> liftIO $ i1_reset_filters a
         _ -> return Nothing
 
-pairSelectChild pair = do
+pairChangeChildScope pair = do
     let currentMaybeScope = pair ^. pairChild ^. proj_ios ^. scopedMaybeScope
     let maybeParentRow = safeCursor ((getLO1 (pair ^. pairParent)) ^. lo1_zip_row)
     let newMaybeScope = case maybeParentRow of
@@ -248,10 +305,10 @@ accountProj conn = Projection (SimpleIOSelector conn) (lO1FromAlenses account_al
 transactionProj conn = Projection  (SimpleIOSelector conn) (lO1FromAlenses transactionAlenses)
 splitProj conn = Projection (SimpleIOSelector conn) (lO1FromAlenses splitAlenses)
 splitScopedProj conn = Projection (ScopedIOSelector conn (Just 3::Maybe Int)) (lO1FromAlenses splitScopedAlenses)
-transactionSplitProj conn = ProjectionPair (transactionProj conn) (splitScopedProj conn) True 50
+transactionSplitProj conn = ProjectionPair (transactionProj conn) (splitScopedProj conn) True 50 False
 statementProjInitialScope = Just (StatementScope 2 (DateKind "2016-01-01") (DateKind "2017-01-01"))
 statementProj conn = Projection (ScopedIOSelector conn statementProjInitialScope) (lO1FromAlenses statementAlenses)
-accountStatementProj conn = ProjectionPair (accountProj conn) (statementProj conn) True 60
+accountStatementProj conn = ProjectionPair (accountProj conn) (statementProj conn) True 60 False
 
 -- sql
 
@@ -289,7 +346,8 @@ main = do
         colorYellowID <- newColorID ColorYellow ColorDefault 3
         colorBlueID <- newColorID ColorBlue ColorDefault 4
         colorWhiteID <- newColorID ColorWhite ColorDefault 5
-        let colors = Colors colorRedID colorYellowID colorBlueID colorWhiteID
+        colorGreenID <- newColorID ColorGreen ColorDefault 6
+        let colors = Colors colorRedID colorYellowID colorBlueID colorWhiteID colorGreenID
         let coreApp_ = CoreState conn colors "" BasicStateSelect
         let mainApp_ = accountStatementProj conn
         coreWindows_ <- appInitWindows coreApp_
