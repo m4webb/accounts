@@ -29,9 +29,9 @@ data StatementRow = StatementRow {
     _statementDescription :: String,
     _statementAccount :: String,
     _statementCounter :: String,
-    _statementKind :: SplitKind,
-    _statementAmount :: Scientific,
-    _statementBalance :: Scientific 
+--    _statementKind :: SplitKind,
+    _statementAmount :: String,
+    _statementBalance :: String
     } deriving (Show)
 
 makeLenses ''StatementRow
@@ -40,7 +40,7 @@ instance Eq StatementRow where
     row1 == row2 = (row1 ^. statementSid) == (row2 ^. statementSid)
 
 instance FromRow StatementRow where
-   fromRow = StatementRow <$> field <*> field <*> field <*> field <*> field <*> field <*> field <*> field
+   fromRow = StatementRow <$> field <*> field <*> field <*> field <*> field <*> field <*> field
 
 -- ScopedIOSelector
 
@@ -95,7 +95,7 @@ instance IOSelector (ScopedIOSelector StatementScope) StatementRow where
                 case aids of
                     [Only aid] -> do
                         execute conn updateAccountQueryFmt (aid, sid)
-                    _ -> throw (SqlError "" NonfatalError (pack ("no account named " ++ val)) "" "")
+                    _ -> throw (SqlError "" NonfatalError (pack ("No account named " ++ val)) "" "")
             | lens == stmtCounterAlens -> do
                 let getAccountAidQueryFmt = Query "SELECT aid FROM accounts WHERE name=?;"
                 let checkCounterQueryFmt = (Query (intercalate "\n" [
@@ -121,7 +121,7 @@ instance IOSelector (ScopedIOSelector StatementScope) StatementRow where
                         case counterAids of
                             [Only counterAid] -> do
                                 execute conn updateCounterQueryFmt (counterAid, sid)
-                            _ -> throw (SqlError "" NonfatalError (pack ("No account named " ++ (row ^. statementCounter))) "" "")
+                            _ -> throw (SqlError "" NonfatalError (pack ("No account named " ++ val)) "" "")
                     _ -> throw (SqlError "" NonfatalError (pack "Cannot update counter on split transactions.") "" "")
             | lens == stmtAmountAlens -> do
                 let checkCounterQueryFmt = (Query (intercalate "\n" [
@@ -209,7 +209,7 @@ statementAlenses = [
     stmtDescAlens,
     stmtAccountAlens,
     stmtCounterAlens,
-    stmtKindAlens,
+    --stmtKindAlens,
     stmtAmountAlens,
     stmtBalanceAlens
     ]
@@ -220,14 +220,14 @@ stmtDateAlens = AccLens
     True
     "date"
 
-stmtKindAlens = AccLens
-    (\row -> unpackSK (row ^. statementKind))
+--stmtKindAlens = AccLens
+--    (\row -> unpackSK (row ^. statementKind))
 --    Nothing
-    False
-    "kind"
+--    False
+--    "kind"
 
 stmtAmountAlens = AccLens
-    (\row -> show (row ^. statementAmount))
+    (\row -> row ^. statementAmount)
 --    Nothing
     True
     "amount"
@@ -251,7 +251,7 @@ stmtDescAlens = AccLens
     "description"
 
 stmtBalanceAlens = AccLens
-    (\row -> show (row ^. statementBalance))
+    (\row -> row ^. statementBalance)
 --    Nothing
     False
     "balance"

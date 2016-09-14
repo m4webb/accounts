@@ -9,6 +9,8 @@ module Main where
 import UI.NCurses
 import UI.NCurses.Types
 import Database.PostgreSQL.Simple
+import Database.PostgreSQL.Simple.Transaction
+import Database.PostgreSQL.Simple.Types
 import Projection
 import Accounts
 import AccountSelector
@@ -16,6 +18,7 @@ import TransactionSelector
 import SplitSelector
 import StatementSelector
 import Data.List.Zipper
+import Data.Scientific as Scientific
 import Control.Lens
 import Control.Monad.IO.Class (liftIO)
 import Data.ByteString.Char8 (unpack)
@@ -73,6 +76,8 @@ import SQLTypes
 
 -- TODO: Make draw stuff good
 
+-- TODO: ability for app to request new windows?
+
 instance MonadThrow Curses where
     throwM e = Curses (throwIO e)
 
@@ -116,11 +121,11 @@ makeLenses ''ProjectionPair
 --    lo1dcCannotSetColor :: Colors -> ColorID
 --    }
 
-normalLO1Context = LO1DrawContext (view colorWhite) (view colorWhite) (view colorRed) (view colorYellow)
-activeLO1Context = LO1DrawContext (view colorWhite) (view colorGreen) (view colorRed) (view colorYellow)
-inactiveLO1Context = LO1DrawContext (view colorWhite) (view colorYellow) (view colorRed) (view colorYellow)
-activeLockedLO1Context = LO1DrawContext (view colorWhite) (view colorGreen) (view colorRed) (view colorYellow)
-inactiveLockedLO1Context = LO1DrawContext (view colorWhite) (view colorRed) (view colorRed) (view colorYellow)
+normalLO1Context = LO1DrawContext (view colorWhite) (view colorWhite) (view colorGreen) (view colorYellow)
+activeLO1Context = LO1DrawContext (view colorWhite) (view colorGreen) (view colorGreen) (view colorYellow)
+inactiveLO1Context = LO1DrawContext (view colorWhite) (view colorYellow) (view colorGreen) (view colorYellow)
+activeLockedLO1Context = LO1DrawContext (view colorWhite) (view colorGreen) (view colorGreen) (view colorYellow)
+inactiveLockedLO1Context = LO1DrawContext (view colorWhite) (view colorRed) (view colorGreen) (view colorYellow)
 
 instance Scopeable TransactionRow Int where
     getMaybeScope row maybeScope = Just $ row ^. transactionTid
@@ -131,7 +136,7 @@ instance Scopeable AccountRow Int where
 instance Scopeable AccountRow StatementScope where
     getMaybeScope row maybeScope = case maybeScope of
         Just scope -> Just (scope & statementScopeAid .~ (row ^. account_aid))
-        Nothing -> Nothing
+        Nothing -> Just (StatementScope (row ^. account_aid) (DateKind "1900-01-01") (DateKind "2100-01-01"))
 
 type CursesInput = String -> Curses (Maybe String)
 
@@ -199,6 +204,9 @@ instance (IOSelector ios row, Eq row) => App (Projection ios row) where
 minimumLO1DrawSize = 8
 mLDS = 8
 
+incRatio x = (min 100 (x+5))
+decRatio x = (max 0 (x-5))
+
 instance (IOSelector ios1 row1, IOSelector (ScopedIOSelector scopeType) row2, Scopeable row1 scopeType, Eq row1, Eq row2) =>
             App (ProjectionPair ios1 row1 (ScopedIOSelector scopeType) row2) where
     appInitWindows pair = do
@@ -225,7 +233,7 @@ instance (IOSelector ios1 row1, IOSelector (ScopedIOSelector scopeType) row2, Sc
     appHandleEvent pair event input = do
         case event of
             EventCharacter 'w' -> return (Just (pair & pairParentActive %~ not))
-            EventCharacter 'P' ->  return (Just (pair & pairChildLocked %~ not))
+            EventCharacter 'P' -> return (Just (pair & pairChildLocked %~ not))
             EventCharacter 'p' -> fmap Just (pairChangeChildScope pair)
             _ -> do
                 case (pair ^. pairParentActive) of
@@ -304,11 +312,12 @@ lO1FromAlenses alenses = LO1 (fromList []) (fromList alenses) (fromList [])
 accountProj conn = Projection (SimpleIOSelector conn) (lO1FromAlenses account_alenses)
 transactionProj conn = Projection  (SimpleIOSelector conn) (lO1FromAlenses transactionAlenses)
 splitProj conn = Projection (SimpleIOSelector conn) (lO1FromAlenses splitAlenses)
-splitScopedProj conn = Projection (ScopedIOSelector conn (Just 3::Maybe Int)) (lO1FromAlenses splitScopedAlenses)
+splitScopedProj conn = Projection (ScopedIOSelector conn (Nothing::Maybe Int)) (lO1FromAlenses splitScopedAlenses)
 transactionSplitProj conn = ProjectionPair (transactionProj conn) (splitScopedProj conn) True 50 False
-statementProjInitialScope = Just (StatementScope 2 (DateKind "2016-01-01") (DateKind "2017-01-01"))
+--statementProjInitialScope = Just (StatementScope 2 (DateKind "2016-01-01") (DateKind "2017-01-01"))
+statementProjInitialScope = Nothing :: Maybe StatementScope
 statementProj conn = Projection (ScopedIOSelector conn statementProjInitialScope) (lO1FromAlenses statementAlenses)
-accountStatementProj conn = ProjectionPair (accountProj conn) (statementProj conn) True 60 False
+accountStatementProj conn = ProjectionPair (accountProj conn) (statementProj conn) True 50 False
 
 -- sql
 
@@ -325,14 +334,28 @@ handleSqlErrorCore core error = do
 handleSqlErrorState state error = do
     state & coreApp %%~ (\core -> handleSqlErrorCore core error)
 
-commitUnsafe state = do
+specialCheckQuery = Query "SELECT s FROM (SELECT SUM(AMOUNT * CASE WHEN kind = 'credit' THEN -1 ELSE 1 END) AS s FROM splits \
+                          \GROUP BY tid) a WHERE s != 0;"
+
+commitState state = do
     let core = state ^. coreApp
-    liftIO $ commit (core ^. coreConnection)
-    liftIO $ begin (core ^. coreConnection)
-    let newState1 = state & coreApp . coreBasicState .~ BasicStateNormal
-    let newState2 = newState1 & coreApp . coreStatus .~ "Commit."
-    newState3 <- newState2 & mainApp %%~ appSelect
-    return newState3
+    let conn = core ^. coreConnection
+    catch (do
+                specialCheckRes <- liftIO $ query_ conn specialCheckQuery :: Curses [Only Scientific]
+                case specialCheckRes of
+                    [] -> do
+                            liftIO $ commit conn
+                            liftIO $ begin conn
+                            let newState1 = state & coreApp . coreBasicState .~ BasicStateNormal
+                            let newState2 = newState1 & coreApp . coreStatus .~ "Commit."
+                            newState3 <- newState2 & mainApp %%~ appSelect
+                            return newState3
+                    _ -> do
+                            let newState1 = state & coreApp . coreBasicState .~ BasicStateNormal
+                            let newState2 = newState1 & coreApp . coreStatus .~ "Imbalances will prevent commit from succeeding."
+                            return newState2
+                )
+          (\error -> handleSqlErrorState state error)
 
 -- main
 
@@ -373,7 +396,7 @@ mainLoop state = do
             newState3 <- newState2 & mainApp %%~ appSelect
             mainLoop newState3
         BasicStateCommit -> do
-            newState <- catch (commitUnsafe state) (handleSqlErrorState state)
+            newState <- commitState state
             mainLoop newState
         BasicStateRollback -> do
             liftIO $ rollback (core ^. coreConnection)

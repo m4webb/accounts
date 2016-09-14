@@ -9,6 +9,7 @@ import Accounts
 import Filter
 import Data.Maybe
 import Data.Bool
+--import Data.Scientific as Scientific
 import Data.ByteString.Char8 hiding (head)
 import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.FromRow
@@ -25,15 +26,16 @@ data AccountRow = AccountRow {
     _account_aid :: Int,
     _account_kind :: AccountKind,
     _account_name :: String,
-    _account_description :: Maybe String
+    _account_description :: Maybe String,
+    _account_balance :: String
     } deriving (Show)
 
 makeLenses ''AccountRow
 
 -- AccLens
 
-account_alenses = [account_aid_alens, account_kind_alens, account_name_alens, account_description_alens]
-account_alenses_no_aid = [account_kind_alens, account_name_alens, account_description_alens]
+account_alenses = [account_aid_alens, account_kind_alens, account_name_alens, account_balance_alens, account_description_alens] 
+account_alenses_no_aid = [account_kind_alens, account_name_alens, account_description_alens, account_balance_alens]
 
 -- account aid alens
 
@@ -88,17 +90,26 @@ account_description_alens = AccLens
     True
     "description"
 
+account_balance_alens = AccLens
+    (\row -> row ^. account_balance)
+--    (Just account_name_set)
+    False
+    "balance"
+
+
 -- equal when same identity, not same values in general
 instance Eq AccountRow where
     row1 == row2 = (row1 ^. account_aid) == (row2 ^. account_aid)
 
 instance FromRow AccountRow where
-   fromRow = AccountRow <$> field <*> field <*> field <*> field
+   fromRow = AccountRow <$> field <*> field <*> field <*> field <*> field
 
 instance IOSelector SimpleIOSelector AccountRow where
     iosSelect selector = query_ (selector ^. selectorConnection) (Query (intercalate "\n" [
-        "SELECT aid, kind, name, description",
-        "FROM accounts",
+        "SELECT a.aid, a.kind, a.name, a.description,",
+        "TO_CHAR(SUM(s.amount * CASE WHEN s.kind = 'credit' THEN -1 ELSE 1 END), 'MI99990.99')",
+        "FROM accounts a INNER JOIN splits s ON a.aid = s.aid",
+        "GROUP BY a.aid, a.kind, a.name, a.description",
         "ORDER BY kind, name",
         ";"
         ]))

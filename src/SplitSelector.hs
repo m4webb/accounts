@@ -28,7 +28,7 @@ data SplitRow = SplitRow {
     _splitTid :: Int,
     _splitAccount :: String,
     _splitKind :: SplitKind,
-    _splitAmount :: Scientific,
+    _splitAmount :: String,
     _splitMemo :: Maybe String
     } deriving (Show)
 
@@ -44,7 +44,7 @@ instance FromRow SplitRow where
 
 instance IOSelector SimpleIOSelector SplitRow where
     iosSelect selector = query_ (selector ^. selectorConnection) (Query (intercalate "\n" [
-        "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
+        "SELECT s.sid, s.tid, a.name, s.kind, TO_CHAR(s.amount, 'MI99990.00'), s.memo",
         "FROM splits s",
         "INNER JOIN accounts a on s.aid = a.aid",
         "ORDER BY s.tid, s.kind DESC",
@@ -63,7 +63,7 @@ instance IOSelector SimpleIOSelector SplitRow where
                 ";"
                 ])
         let selectQueryStrFmt = (Query (intercalate "\n" [
-                "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
+                "SELECT s.sid, s.tid, a.name, s.kind, TO_CHAR(s.amount, 'MI99990.00'), s.memo",
                 "FROM splits s",
                 "INNER JOIN accounts a on s.aid = a.aid",
                 "WHERE s.sid=?",
@@ -99,7 +99,7 @@ instance IOSelector SimpleIOSelector SplitRow where
                 case aids of
                     [Only aid] -> do
                         query conn queryFmt (aid, sid)
-                    _ -> throw (SqlError "" NonfatalError (pack ("no account named " ++ (row ^. splitAccount))) "" "")
+                    _ -> throw (SqlError "" NonfatalError (pack ("No account named " ++ val)) "" "")
             | lens == splitKindAlens -> do
                 let kind = case val of
                         "credit" -> packSK "credit"
@@ -138,7 +138,7 @@ instance IOSelector SimpleIOSelector SplitRow where
         case res of
             [Only sid] -> do
                 let selectQueryFmt = (Query (intercalate "\n" [
-                        "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
+                        "SELECT s.sid, s.tid, a.name, s.kind, TO_CHAR(s.amount, 'MI99990.00'), s.memo",
                         "FROM splits s",
                         "INNER JOIN accounts a on s.aid = a.aid",
                         "WHERE s.sid=?",
@@ -166,7 +166,7 @@ instance IOSelector (ScopedIOSelector Int) SplitRow where
             Just tid -> do
                 let conn = scoped ^. scopedConnection
                 let selectQueryStrFmt = Query (intercalate "\n" [
-                        "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
+                        "SELECT s.sid, s.tid, a.name, s.kind, TO_CHAR(s.amount, 'MI99990.00'), s.memo",
                         "FROM splits s",
                         "INNER JOIN accounts a on s.aid = a.aid",
                         "WHERE s.tid=?",
@@ -188,7 +188,7 @@ instance IOSelector (ScopedIOSelector Int) SplitRow where
                         ";"
                         ])
                 let selectQueryStrFmt = (Query (intercalate "\n" [
-                        "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
+                        "SELECT s.sid, s.tid, a.name, s.kind, TO_CHAR(s.amount, 'MI99990.00'), s.memo",
                         "FROM splits s",
                         "INNER JOIN accounts a on s.aid = a.aid",
                         "WHERE s.sid=?",
@@ -225,7 +225,7 @@ instance IOSelector (ScopedIOSelector Int) SplitRow where
                 case aids of
                     [Only aid] -> do
                         query conn queryFmt (aid, sid)
-                    _ -> throw (SqlError "" NonfatalError (pack ("no account named " ++ (row ^. splitAccount))) "" "")
+                    _ -> throw (SqlError "" NonfatalError (pack ("No account named " ++ val)) "" "")
             | lens == splitKindAlens -> do
                 let kind = case val of
                         "credit" -> packSK "credit"
@@ -264,7 +264,7 @@ instance IOSelector (ScopedIOSelector Int) SplitRow where
         case res of
             [Only sid] -> do
                 let selectQueryFmt = (Query (intercalate "\n" [
-                        "SELECT s.sid, s.tid, a.name, s.kind, s.amount, s.memo",
+                        "SELECT s.sid, s.tid, a.name, s.kind, TO_CHAR(s.amount, 'MI99990.00'), s.memo",
                         "FROM splits s",
                         "INNER JOIN accounts a on s.aid = a.aid",
                         "WHERE s.sid=?",
@@ -334,7 +334,7 @@ splitKindAlens = AccLens
 --    Just val -> row & splitAmount .~ val
 
 splitAmountAlens = AccLens
-    (\row -> show (row ^. splitAmount))
+    (\row -> row ^. splitAmount)
 --    (Just splitAmountSet)
     True
     "amount"

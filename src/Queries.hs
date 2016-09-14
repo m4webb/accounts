@@ -11,14 +11,13 @@ statementSelectQueryFmt = Query "\n\
 \    a.description AS description,\n\
 \    a.account AS account,\n\
 \    a.counter AS counter,\n\
-\    a.kind AS kind,\n\
-\    a.amount AS amount,\n\
-\    SUM (\n\
+\    TO_CHAR(a.amount * CASE WHEN a.kind = 'credit' THEN -1 ELSE 1 END, 'MI99990.00') AS amount,\n\
+\    TO_CHAR(SUM (\n\
 \        CASE\n\
 \        WHEN b.kind = 'debit' THEN b.amount\n\
 \        ELSE -1*b.amount\n\
 \        END\n\
-\        ) AS balance\n\
+\        ), 'MI99990.00') AS balance\n\
 \FROM (\n\
 \    SELECT\n\
 \        s.sid AS sid,\n\
@@ -76,14 +75,13 @@ statementSelectSingleQueryFmt = Query "\n\
 \    a.description AS description,\n\
 \    a.account AS account,\n\
 \    a.counter AS counter,\n\
-\    a.kind AS kind,\n\
-\    a.amount AS amount,\n\
-\    SUM (\n\
+\    TO_CHAR(a.amount * CASE WHEN a.kind = 'credit' THEN -1 ELSE 1 END, 'MI99990.00') AS amount,\n\
+\    TO_CHAR(SUM (\n\
 \        CASE\n\
 \        WHEN b.kind = 'debit' THEN b.amount\n\
 \        ELSE -1*b.amount\n\
 \        END\n\
-\        ) AS balance\n\
+\        ), 'MI99990.00') AS balance\n\
 \FROM (\n\
 \    SELECT\n\
 \        s.sid AS sid,\n\
