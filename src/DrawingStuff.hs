@@ -151,7 +151,7 @@ data LO1DrawContext = LO1DrawContext {
 makeLenses ''LO1DrawContext
 
 drawLO1 w colors context lo1 = updateWindow w $ do
-    clear
+    erase
     max_y <- fmap fst windowSize
     max_x <- fmap snd windowSize
     if max_y < 8
@@ -213,7 +213,7 @@ drawLO1 w colors context lo1 = updateWindow w $ do
             --    ("Filter " ++ filtersToSql (toList (lo1 ^. lo1_zip_filters)))) (max_y-1) 2
 
 drawLO1Old w colors context lo1 = updateWindow w $ do
-    clear
+    erase 
     max_y <- fmap fst windowSize
     max_x <- fmap snd windowSize
     if max_y < 8

@@ -164,12 +164,13 @@ instance App CoreState where
 
     appDraw core (inputWindow:statusWindow:_) colors = do
         updateWindow statusWindow $ do
-            clear
+            erase
             max_x <- fmap (fromInteger . snd) windowSize
             let msg = (show (core ^. coreBasicState)) ++ " " ++ (core ^. coreStatus)
             drawStringPos (clipString (max_x-1) msg) 0 2
-        updateWindow (inputWindow) $ do -- this is cheating?
-            clear
+        updateWindow inputWindow $ do -- this is cheating?
+            erase
+            return ()
 
     appHandleEvent core event input = do
         case event of
@@ -256,10 +257,14 @@ instance (IOSelector ios1 row1, IOSelector (ScopedIOSelector scopeType) row2, Sc
 
     appSelect pair = do
         newPairParent <- liftIO $ i1_select (pair ^. pairParent)
-        newPairChild <- liftIO $ i1_select (pair ^. pairChild)
         let newPair1 = pair & pairParent .~ newPairParent
-        let newPair2 = newPair1 & pairChild .~ newPairChild
-        return newPair2
+        let currentMaybeScope = newPair1 ^. pairChild ^. proj_ios ^. scopedMaybeScope
+        case currentMaybeScope of
+                Nothing -> pairChangeChildScope newPair1
+                Just _ -> do
+                    newPairChild <- liftIO $ i1_select (newPair1 ^. pairChild)
+                    let newPair2 = newPair1 & pairChild .~ newPairChild
+                    return newPair2
 
 i1HandleEvent a event input = do
     case event of
@@ -376,6 +381,7 @@ main = do
         coreWindows_ <- appInitWindows coreApp_
         mainWindows_ <- appInitWindows mainApp_
         let bigState = BigState coreApp_ coreWindows_ mainApp_ mainWindows_
+        liftIO $ begin conn
         mainLoop bigState
 
 changeMainApp :: (App a, App b) => BigState a -> b -> Curses (BigState b)
@@ -390,7 +396,6 @@ mainLoop state = do
     let core = state ^. coreApp
     case (core ^. coreBasicState) of
         BasicStateSelect -> do
-            liftIO $ begin (core ^. coreConnection)
             let newState1 = state & coreApp . coreBasicState .~ BasicStateNormal
             let newState2 = newState1 & coreApp . coreStatus .~ "Select."
             newState3 <- newState2 & mainApp %%~ appSelect
