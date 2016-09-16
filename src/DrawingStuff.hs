@@ -150,6 +150,10 @@ data LO1DrawContext = LO1DrawContext {
 
 makeLenses ''LO1DrawContext
 
+dr3 m = map snd . filter ((== 1) . fst) . zip (cycle [1..m])
+
+switchAlternatingStart (Zip b _) n_above = ((length b) > n_above) && (mod (length b) 2) == 1
+
 drawLO1 w colors context lo1 = updateWindow w $ do
     erase
     max_y <- fmap fst windowSize
@@ -186,8 +190,22 @@ drawLO1 w colors context lo1 = updateWindow w $ do
             let q3 = [f a | (f, a) <- (zip q2 strStarts)] 
             setColor $ (context ^. lo1dcNormalColor) colors
             foldl (>>) (return ()) q3
-            setColor $ (context ^. lo1dcNormalColor) colors
-            foldl (>>) (return ()) (toList (fmap (foldl (>>) (return ())) w4))
+            let rowEffects = toList (fmap (foldl (>>) (return ())) w4)
+            case (switchAlternatingStart (lo1 ^. lo1_zip_row) (fromInteger n_above)) of
+                False -> do
+                    foldl (>>) (return ()) (dr3 2 rowEffects)
+                    setAttribute AttributeDim True
+                    case rowEffects of
+                        [] -> return ()
+                        (h:t) -> foldl (>>) (return ()) (dr3 2 t)
+                    setAttribute AttributeDim False
+                True -> do
+                    setAttribute AttributeDim True
+                    foldl (>>) (return ()) (dr3 2 rowEffects)
+                    setAttribute AttributeDim False
+                    case rowEffects of
+                        [] -> return ()
+                        (h:t) -> foldl (>>) (return ()) (dr3 2 t)
             let maybeCurrentAlens = safeCursor (lo1 ^. lo1_zip_lens)
             case maybeCurrentAlens of
                 Nothing -> return ()

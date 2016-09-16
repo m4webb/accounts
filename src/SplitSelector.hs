@@ -56,7 +56,7 @@ instance IOSelector SimpleIOSelector SplitRow where
         let insertQueryStr = Query (intercalate "\n" [
                 "INSERT INTO splits (tid, aid, kind, amount) VALUES (",
                 "(SELECT MIN(tid) from transactions),",
-                "(SELECT MIN(aid) from accounts),",
+                "(SELECT aid from accounts WHERE name = 'Imbalance'),",
                 "'debit',",
                 "0)",
                 "RETURNING sid",
@@ -183,7 +183,7 @@ instance IOSelector (ScopedIOSelector Int) SplitRow where
                 let conn = scoped ^. scopedConnection
                 let insertQueryStrFmt = Query (intercalate "\n" [
                         "INSERT INTO splits (tid, aid, kind, amount)",
-                        "VALUES (?, (SELECT MIN(aid) from accounts), 'debit', 0)",
+                        "VALUES (?, (SELECT aid from accounts WHERE name = 'Imbalance'), 'debit', 0)",
                         "RETURNING sid",
                         ";"
                         ])

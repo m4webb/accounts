@@ -78,6 +78,14 @@ import SQLTypes
 
 -- TODO: ability for app to request new windows?
 
+-- DONE: alternate row colors? periodic spaces?
+
+-- DONE: fix alternate colors toggle problem
+
+-- TODO: Keep place when switching between apps?
+
+-- TODO: Also highlight column name
+
 instance MonadThrow Curses where
     throwM e = Curses (throwIO e)
 
@@ -187,7 +195,26 @@ instance App CoreState where
 
     appSelect core = return core
 
-instance (IOSelector ios row, Eq row) => App (Projection ios row) where
+--instance (IOSelector ios row, Eq row) => App (Projection ios row) where
+--    appInitWindows proj = do
+--        max_y <- fmap (fromInteger . fst) screenSize
+--        max_x <- fmap (fromInteger . snd) screenSize
+--        mainWindow <- newWindow (max_y - 4) (max_x - 2) 1 1
+--        return [mainWindow]
+--
+--    appDraw proj (window:_) colors = drawLO1 window colors normalLO1Context (getLO1 proj)
+--
+--    appHandleEvent proj event input = do
+--        maybeNewProj <- i1HandleEvent proj event input
+--        return maybeNewProj
+--
+--    appSelect proj = liftIO $ i1_select proj
+
+instance StringSettable CashScope where
+    setWithString s (CashScope _ a b) = CashScope s a b
+
+instance (IOSelector (ScopedIOSelector scopeType) row, Eq row, StringSettable scopeType) =>
+        App (Projection (ScopedIOSelector scopeType) row) where
     appInitWindows proj = do
         max_y <- fmap (fromInteger . fst) screenSize
         max_x <- fmap (fromInteger . snd) screenSize
@@ -197,8 +224,23 @@ instance (IOSelector ios row, Eq row) => App (Projection ios row) where
     appDraw proj (window:_) colors = drawLO1 window colors normalLO1Context (getLO1 proj)
 
     appHandleEvent proj event input = do
-        maybeNewProj <- i1HandleEvent proj event input
-        return maybeNewProj
+         case event of
+            EventCharacter 'z' -> do
+                let maybeScope = proj ^. proj_ios ^. scopedMaybeScope
+                case maybeScope of
+                    Just scope -> do
+                        maybeScopeInput <- input "Set scope?"
+                        case maybeScopeInput of
+                            Just scopeInput -> do
+                                let newScope = setWithString scopeInput scope
+                                let newProj = proj & proj_ios . scopedMaybeScope .~ Just newScope
+                                newProj2 <- appSelect newProj
+                                return $ Just (newProj2)
+                            Nothing -> return (Just proj)
+                    Nothing -> return (Just proj)
+            _ -> do
+                maybeNewProj <- i1HandleEvent proj event input
+                return maybeNewProj
 
     appSelect proj = liftIO $ i1_select proj
 
@@ -321,6 +363,8 @@ splitScopedProj conn = Projection (ScopedIOSelector conn (Nothing::Maybe Int)) (
 transactionSplitProj conn = ProjectionPair (transactionProj conn) (splitScopedProj conn) True 50 False
 --statementProjInitialScope = Just (StatementScope 2 (DateKind "2016-01-01") (DateKind "2017-01-01"))
 statementProjInitialScope = Nothing :: Maybe StatementScope
+cashStatementProjInitialScope = Just (CashScope "%" (DateKind "2016-01-01") (DateKind "2017-01-01"))
+cashStatementProj conn = Projection (ScopedIOSelector conn cashStatementProjInitialScope) (lO1FromAlenses statementAlenses)
 statementProj conn = Projection (ScopedIOSelector conn statementProjInitialScope) (lO1FromAlenses statementAlenses)
 accountStatementProj conn = ProjectionPair (accountProj conn) (statementProj conn) True 50 False
 
@@ -418,6 +462,7 @@ mainLoop state = do
             case event of
                 Just (EventCharacter '1') -> (changeMainApp state (accountStatementProj (core ^. coreConnection))) >>= mainLoop
                 Just (EventCharacter '2') -> (changeMainApp state (transactionSplitProj (core ^. coreConnection))) >>= mainLoop
+                Just (EventCharacter '3') -> (changeMainApp state (cashStatementProj (core ^. coreConnection))) >>= mainLoop
                 Nothing -> mainLoop state
                 Just event -> do
                     let input = getString (head $ state ^. coreWindows) 0 2

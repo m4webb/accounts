@@ -104,11 +104,20 @@ instance Eq AccountRow where
 instance FromRow AccountRow where
    fromRow = AccountRow <$> field <*> field <*> field <*> field <*> field
 
+singleAccountQueryFmt = Query (intercalate "\n" [
+        "SELECT a.aid, a.kind, a.name, a.description,",
+        "TO_CHAR(COALESCE(SUM(s.amount * CASE WHEN s.kind = 'credit' THEN -1 ELSE 1 END), 0), 'MI99990.99')",
+        "FROM accounts a LEFT JOIN splits s ON a.aid = s.aid",
+        "WHERE a.aid = ?",
+        "GROUP BY a.aid, a.kind, a.name, a.description",
+        ";"
+        ])
+
 instance IOSelector SimpleIOSelector AccountRow where
     iosSelect selector = query_ (selector ^. selectorConnection) (Query (intercalate "\n" [
         "SELECT a.aid, a.kind, a.name, a.description,",
-        "TO_CHAR(SUM(s.amount * CASE WHEN s.kind = 'credit' THEN -1 ELSE 1 END), 'MI99990.99')",
-        "FROM accounts a INNER JOIN splits s ON a.aid = s.aid",
+        "TO_CHAR(COALESCE(SUM(s.amount * CASE WHEN s.kind = 'credit' THEN -1 ELSE 1 END), 0), 'MI99990.99')",
+        "FROM accounts a LEFT JOIN splits s ON a.aid = s.aid",
         "GROUP BY a.aid, a.kind, a.name, a.description",
         "ORDER BY kind, name",
         ";"
@@ -119,41 +128,43 @@ instance IOSelector SimpleIOSelector AccountRow where
         let query_string = (Query (intercalate "\n" [
                 "INSERT INTO accounts (kind, name)",
                 "VALUES ('asset', 'account_' || TO_CHAR(CURRVAL('public.accounts_aid_seq'), 'FM0999'))",
-                "RETURNING aid, kind, name, description",
+                "RETURNING aid",
                 ";"
                 ]))
-        res <- query_ conn query_string
-        return (head res)
+        [Only newAid] <- query_ conn query_string :: IO [Only Int]
+        [res] <- query conn singleAccountQueryFmt [newAid]
+        return res
 
     iosUpdate selector row lens val = do
         let conn = (selector ^. selectorConnection)
-        res <- if 
+        [Only newAid] <- if 
             | lens == account_kind_alens -> do
                 let query_string = (Query (intercalate "\n" [
                         "UPDATE accounts SET kind=?",
-                        "WHERE aid=? RETURNING aid, kind, name, description",
+                        "WHERE aid=? RETURNING aid",
                         ";"
                         ]))
-                query conn query_string (val, row ^. account_aid)
+                query conn query_string (val, row ^. account_aid) :: IO [Only Int]
             | lens == account_name_alens -> do
                 let query_string = (Query (intercalate "\n" [
                         "UPDATE accounts SET name=?",
-                        "WHERE aid=? RETURNING aid, kind, name, description",
+                        "WHERE aid=? RETURNING aid",
                         ";"
                         ]))
-                query conn query_string (val, row ^. account_aid)
+                query conn query_string (val, row ^. account_aid) :: IO [Only Int]
             | lens == account_description_alens -> do
                 let query_string = (Query (intercalate "\n" [
                         "UPDATE accounts SET description=?",
-                        "WHERE aid=? RETURNING aid, kind, name, description",
+                        "WHERE aid=? RETURNING aid",
                         ";"
                         ]))
                 let insertVal = case val of
                         "None" -> Nothing
                         justVal -> Just justVal
-                query conn query_string (insertVal, row ^. account_aid)
+                query conn query_string (insertVal, row ^. account_aid) :: IO [Only Int]
             | otherwise -> throw (SqlError "" NonfatalError (pack "This field cannot be updated.") "" "")
-        return (head res)
+        [res] <- query conn singleAccountQueryFmt [newAid]
+        return res
 
     iosDelete selector row = do
         let conn = (selector ^. selectorConnection)

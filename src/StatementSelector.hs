@@ -52,6 +52,14 @@ data StatementScope = StatementScope {
 
 makeLenses ''StatementScope
 
+data CashScope = CashScope {
+    _cashScopeDescription :: String,
+    _cashScopeDateFrom :: DateKind,
+    _cashScopeDateTo :: DateKind
+    } deriving (Show)
+
+makeLenses ''CashScope
+
 instance IOSelector (ScopedIOSelector StatementScope) StatementRow where
     iosSelect scoped = do
         let maybeScope = scoped ^. scopedMaybeScope
@@ -149,58 +157,117 @@ instance IOSelector (ScopedIOSelector StatementScope) StatementRow where
         case res of
             [newRow] -> return newRow
             _ -> throw (SqlError "" FatalError (pack "Could not reselect row in statement update.") "" "")
-        
-    --iosUpdate scoped row = do
-    --    let conn = (scoped ^. scopedConnection)
-    --    let sid = row ^. statementSid
-    --    let getAccountAidQueryFmt = Query "SELECT aid FROM accounts WHERE name=?"
-    --    let updateDateDescQueryFmt = (Query (intercalate "\n" [
-    --            "UPDATE transactions SET date=?, description=?",
-    --            "WHERE tid IN (SELECT tid FROM splits where sid=?)",
-    --            ";"
-    --            ]))
-    --    let updateAccountQueryFmt = (Query (intercalate "\n" [
-    --            "UPDATE splits SET aid=?",
-    --            "WHERE sid=?",
-    --            ";"
-    --            ]))
-    --    let checkCounterQueryFmt = (Query (intercalate "\n" [
-    --            "SELECT s2.sid FROM splits s",
-    --            "LEFT JOIN transactions t ON s.sid = t.tid",
-    --            "LEFT JOIN splits s2 ON s.kind != s2.kind AND s.tid = s2.tid",
-    --            "WHERE s.sid = ?",
-    --            ";"
-    --            ]))
-    --    let updateCounterQueryFmt = (Query (intercalate "\n" [
-    --            "UPDATE splits SET aid=?",
-    --            "WHERE sid IN (",
-    --            "SELECT s2.sid FROM splits s",
-    --            "LEFT JOIN transactions t ON s.sid = t.tid",
-    --            "LEFT JOIN splits s2 ON s.kind != s2.kind AND s.tid = s2.tid",
-    --            "WHERE s.sid = ?)",
-    --            ";"
-    --            ]))
-    --    accountAids <- query conn getAccountAidQueryFmt (row ^. statementAccount) :: IO [Only Int]
-    --    case accountAid of
-    --        [Only accountAid] -> do
-    --            counterCheck <- query conn checkCounterQueryFmt (Only sid)
-    --            case (length counterCheck) of
-    --                1 -> do
-    --                    counterAids <- query conn getAccountAidQueryFmt (row ^. statementCounter) :: IO [Only Int]
-    --                    case counterAids of
-    --                        [Only counterAid] -> do
-    --                            execute conn updateDateDescQueryFmt (row ^. statementDate, row ^. statementDescription, sid)
-    --                            execute conn updateAccountQueryFmt (accountAid, sid)
-    --                            execute conn updateCounterQueryFmt (counterAid, sid)
-    --                            newRow <- query conn statementSelectSingleQueryFmt (sid)
-    --                            case newRows of
-    --                                [newRow] -> return newRow
-    --                                _ -> throw (SqlError "" FatalError (pack "could not select updated statement row") "" "")
-    --                        _ ->  throw (SqlError "" NonfatalError (pack ("no account named " ++ (row ^. statementCounter))) "" "")
-    --                _ -> do
-    --        _ -> throw (SqlError "" NonfatalError (pack ("no account named " ++ (row ^. statementAccount))) "" "")
 
     iosDelete scoped row = throw (SqlError "" NonfatalError (pack "Cannot delete from statements.") "" "")
+
+instance IOSelector (ScopedIOSelector CashScope) StatementRow where
+    iosSelect scoped = do
+        let maybeScope = scoped ^. scopedMaybeScope
+        case maybeScope of
+            Just scope -> do
+                let description = scope ^. cashScopeDescription
+                let dateFrom = scope ^. cashScopeDateFrom
+                let dateTo = scope ^. cashScopeDateTo
+                let conn = scoped ^. scopedConnection
+                query conn statementSelectCashQueryFmt (description, dateFrom, dateTo, description)
+            Nothing -> return []
+
+    iosInsert scoped = throw (SqlError "" NonfatalError (pack "Cannot insert into statements.") "" "")
+
+    iosUpdate scoped row lens val = do
+        let conn = (scoped ^. scopedConnection)
+        let sid = row ^. statementSid
+        if
+            | lens == stmtDateAlens -> do
+                let queryFmt = (Query (intercalate "\n" [
+                        "UPDATE transactions SET date=?",
+                        "WHERE tid IN (SELECT tid FROM splits where sid=?)",
+                        ";"
+                        ]))
+                execute conn queryFmt (val, sid)
+            | lens == stmtDescAlens -> do
+                let queryFmt = (Query (intercalate "\n" [
+                        "UPDATE transactions SET description=?",
+                        "WHERE tid IN (SELECT tid FROM splits where sid=?)",
+                        ";"
+                        ]))
+                execute conn queryFmt (val, sid)
+            | lens == stmtAccountAlens -> do
+                let getAccountAidQueryFmt = Query "SELECT aid FROM accounts WHERE name=?;"
+                let updateAccountQueryFmt = (Query (intercalate "\n" [
+                        "UPDATE splits SET aid=?",
+                        "WHERE sid=?",
+                        ";"
+                        ]))
+                aids <- query conn getAccountAidQueryFmt (Only val) :: IO [Only Int]
+                case aids of
+                    [Only aid] -> do
+                        execute conn updateAccountQueryFmt (aid, sid)
+                    _ -> throw (SqlError "" NonfatalError (pack ("No account named " ++ val)) "" "")
+            | lens == stmtCounterAlens -> do
+                let getAccountAidQueryFmt = Query "SELECT aid FROM accounts WHERE name=?;"
+                let checkCounterQueryFmt = (Query (intercalate "\n" [
+                        "SELECT s2.sid FROM splits s",
+                        "LEFT JOIN transactions t ON s.sid = t.tid",
+                        "LEFT JOIN splits s2 ON s.kind != s2.kind AND s.tid = s2.tid",
+                        "WHERE s.sid = ?",
+                        ";"
+                        ]))
+                let updateCounterQueryFmt = (Query (intercalate "\n" [
+                        "UPDATE splits SET aid=?",
+                        "WHERE sid IN (",
+                        "SELECT s2.sid FROM splits s",
+                        "LEFT JOIN transactions t ON s.sid = t.tid",
+                        "LEFT JOIN splits s2 ON s.kind != s2.kind AND s.tid = s2.tid",
+                        "WHERE s.sid = ?)",
+                        ";"
+                        ]))
+                counterCheck <- query conn checkCounterQueryFmt (Only sid) :: IO [Only Int]
+                case (length counterCheck) of
+                    1 -> do
+                        counterAids <- query conn getAccountAidQueryFmt (Only val) :: IO [Only Int]
+                        case counterAids of
+                            [Only counterAid] -> do
+                                execute conn updateCounterQueryFmt (counterAid, sid)
+                            _ -> throw (SqlError "" NonfatalError (pack ("No account named " ++ val)) "" "")
+                    _ -> throw (SqlError "" NonfatalError (pack "Cannot update counter on split transactions.") "" "")
+            | lens == stmtAmountAlens -> do
+                let checkCounterQueryFmt = (Query (intercalate "\n" [
+                        "SELECT s2.sid FROM splits s",
+                        "LEFT JOIN transactions t ON s.sid = t.tid",
+                        "LEFT JOIN splits s2 ON s.kind != s2.kind AND s.tid = s2.tid",
+                        "WHERE s.sid = ?",
+                        ";"
+                        ]))
+                let updateAmountQueryFmt = (Query (intercalate "\n" [
+                        "UPDATE splits SET amount=?",
+                        "WHERE tid IN (SELECT tid FROM splits WHERE sid=?)",
+                        ";"
+                        ]))
+                counterCheck <- query conn checkCounterQueryFmt (Only sid) :: IO [Only Int]
+                case (length counterCheck) of
+                    1 -> do
+                        case (readMaybe val :: Maybe Scientific) of
+                            Nothing -> throw (SqlError "" NonfatalError (pack ("cannot read " ++ val)) "" "")
+                            Just readVal -> do
+                                execute conn updateAmountQueryFmt (readVal, sid)
+                    _ -> throw (SqlError "" NonfatalError (pack "Cannot update amount on split transactions.") "" "")
+            | otherwise -> throw (SqlError "" NonfatalError (pack "Cannot update field.") "" "")
+        res <- query conn statementSelectSingleQueryFmt (Only sid)
+        case res of
+            [newRow] -> return newRow
+            _ -> throw (SqlError "" FatalError (pack "Could not reselect row in statement update.") "" "")
+
+    iosDelete scoped row = do
+        let conn = scoped ^. scopedConnection
+        let sid = row ^. statementSid
+        let getTidQuery = "SELECT tid FROM splits WHERE sid=?;"
+        let deleteSplitsQuery = "DELETE FROM splits WHERE tid=?;"
+        let deleteTransactionQuery = "DELETE FROM transactions WHERE tid=?;"
+        [Only tid] <- query conn getTidQuery [sid] :: IO [Only Int]
+        execute conn deleteSplitsQuery [tid]
+        execute conn deleteTransactionQuery [tid]
+        return ()
 
 -- AccLens
 

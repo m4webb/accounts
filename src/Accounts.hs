@@ -83,3 +83,5 @@ makeLenses ''ScopedIOSelector
 class Scopeable a b where
     getMaybeScope :: a -> Maybe b -> Maybe b
 
+class StringSettable a where
+    setWithString :: String -> a -> a
