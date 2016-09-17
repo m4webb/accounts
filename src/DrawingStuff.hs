@@ -226,7 +226,13 @@ drawLO1 w colors context lo1 = updateWindow w $ do
                             let y = (quot max_y 2)
                             let x = strStarts !! i
                             drawStringPos (clipString (trimmedLengths !! i) ((currentAlens ^. alens_get) currentRow)) y x
+                            drawStringPos (clipString (trimmedLengths !! i) (currentAlens ^. alens_name)) 1 x
                     setColor defaultColorID
+            let getScrollY (Zip a b) = quot ((length a) * ((fromInteger max_y) - 6)) (max ((length a) + (length b) - 1) 1)
+            let scrollY = getScrollY (lo1 ^. lo1_zip_row)
+            setAttribute AttributeReverse True
+            drawGlyphPos glyphLineV (toInteger (scrollY + 3), 0)
+            setAttribute AttributeReverse False
             --drawStringPos (clipString (fromInteger (max_x-3))
             --    ("Filter " ++ filtersToSql (toList (lo1 ^. lo1_zip_filters)))) (max_y-1) 2
 

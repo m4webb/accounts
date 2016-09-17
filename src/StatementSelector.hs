@@ -99,7 +99,7 @@ instance IOSelector (ScopedIOSelector StatementScope) StatementRow where
                         "WHERE sid=?",
                         ";"
                         ]))
-                aids <- query conn getAccountAidQueryFmt (Only val) :: IO [Only Int]
+                aids <- query conn getAccountAidQueryFmt [val] :: IO [Only Int]
                 case aids of
                     [Only aid] -> do
                         execute conn updateAccountQueryFmt (aid, sid)
@@ -108,8 +108,8 @@ instance IOSelector (ScopedIOSelector StatementScope) StatementRow where
                 let getAccountAidQueryFmt = Query "SELECT aid FROM accounts WHERE name=?;"
                 let checkCounterQueryFmt = (Query (intercalate "\n" [
                         "SELECT s2.sid FROM splits s",
-                        "LEFT JOIN transactions t ON s.sid = t.tid",
-                        "LEFT JOIN splits s2 ON s.kind != s2.kind AND s.tid = s2.tid",
+                        "INNER JOIN transactions t ON s.tid = t.tid",
+                        "INNER JOIN splits s2 ON s.kind != s2.kind AND s.tid = s2.tid",
                         "WHERE s.sid = ?",
                         ";"
                         ]))
@@ -117,25 +117,25 @@ instance IOSelector (ScopedIOSelector StatementScope) StatementRow where
                         "UPDATE splits SET aid=?",
                         "WHERE sid IN (",
                         "SELECT s2.sid FROM splits s",
-                        "LEFT JOIN transactions t ON s.sid = t.tid",
-                        "LEFT JOIN splits s2 ON s.kind != s2.kind AND s.tid = s2.tid",
+                        "INNER JOIN transactions t ON s.tid = t.tid",
+                        "INNER JOIN splits s2 ON s.kind != s2.kind AND s.tid = s2.tid",
                         "WHERE s.sid = ?)",
                         ";"
                         ]))
-                counterCheck <- query conn checkCounterQueryFmt (Only sid) :: IO [Only Int]
+                counterCheck <- query conn checkCounterQueryFmt [sid] :: IO [Only Int]
                 case (length counterCheck) of
                     1 -> do
-                        counterAids <- query conn getAccountAidQueryFmt (Only val) :: IO [Only Int]
+                        counterAids <- query conn getAccountAidQueryFmt [val] :: IO [Only Int]
                         case counterAids of
                             [Only counterAid] -> do
                                 execute conn updateCounterQueryFmt (counterAid, sid)
                             _ -> throw (SqlError "" NonfatalError (pack ("No account named " ++ val)) "" "")
-                    _ -> throw (SqlError "" NonfatalError (pack "Cannot update counter on split transactions.") "" "")
+                    _ -> throw (SqlError "" NonfatalError (pack "Cannot update counter on irregular transactions.") "" "")
             | lens == stmtAmountAlens -> do
                 let checkCounterQueryFmt = (Query (intercalate "\n" [
                         "SELECT s2.sid FROM splits s",
-                        "LEFT JOIN transactions t ON s.sid = t.tid",
-                        "LEFT JOIN splits s2 ON s.kind != s2.kind AND s.tid = s2.tid",
+                        "INNER JOIN transactions t ON s.tid = t.tid",
+                        "INNER JOIN splits s2 ON s.kind != s2.kind AND s.tid = s2.tid",
                         "WHERE s.sid = ?",
                         ";"
                         ]))
@@ -144,16 +144,16 @@ instance IOSelector (ScopedIOSelector StatementScope) StatementRow where
                         "WHERE tid IN (SELECT tid FROM splits WHERE sid=?)",
                         ";"
                         ]))
-                counterCheck <- query conn checkCounterQueryFmt (Only sid) :: IO [Only Int]
+                counterCheck <- query conn checkCounterQueryFmt [sid] :: IO [Only Int]
                 case (length counterCheck) of
                     1 -> do
                         case (readMaybe val :: Maybe Scientific) of
                             Nothing -> throw (SqlError "" NonfatalError (pack ("cannot read " ++ val)) "" "")
                             Just readVal -> do
                                 execute conn updateAmountQueryFmt (readVal, sid)
-                    _ -> throw (SqlError "" NonfatalError (pack "Cannot update amount on split transactions.") "" "")
+                    _ -> throw (SqlError "" NonfatalError (pack "Cannot update amount on irregular transactions.") "" "")
             | otherwise -> throw (SqlError "" NonfatalError (pack "Cannot update field.") "" "")
-        res <- query conn statementSelectSingleQueryFmt (Only sid)
+        res <- query conn statementSelectSingleQueryFmt [sid]
         case res of
             [newRow] -> return newRow
             _ -> throw (SqlError "" FatalError (pack "Could not reselect row in statement update.") "" "")
@@ -199,7 +199,7 @@ instance IOSelector (ScopedIOSelector CashScope) StatementRow where
                         "WHERE sid=?",
                         ";"
                         ]))
-                aids <- query conn getAccountAidQueryFmt (Only val) :: IO [Only Int]
+                aids <- query conn getAccountAidQueryFmt [val] :: IO [Only Int]
                 case aids of
                     [Only aid] -> do
                         execute conn updateAccountQueryFmt (aid, sid)
@@ -208,8 +208,8 @@ instance IOSelector (ScopedIOSelector CashScope) StatementRow where
                 let getAccountAidQueryFmt = Query "SELECT aid FROM accounts WHERE name=?;"
                 let checkCounterQueryFmt = (Query (intercalate "\n" [
                         "SELECT s2.sid FROM splits s",
-                        "LEFT JOIN transactions t ON s.sid = t.tid",
-                        "LEFT JOIN splits s2 ON s.kind != s2.kind AND s.tid = s2.tid",
+                        "INNER JOIN transactions t ON s.tid = t.tid",
+                        "INNER JOIN splits s2 ON s.kind != s2.kind AND s.tid = s2.tid",
                         "WHERE s.sid = ?",
                         ";"
                         ]))
@@ -217,25 +217,25 @@ instance IOSelector (ScopedIOSelector CashScope) StatementRow where
                         "UPDATE splits SET aid=?",
                         "WHERE sid IN (",
                         "SELECT s2.sid FROM splits s",
-                        "LEFT JOIN transactions t ON s.sid = t.tid",
-                        "LEFT JOIN splits s2 ON s.kind != s2.kind AND s.tid = s2.tid",
+                        "INNER JOIN transactions t ON s.tid = t.tid",
+                        "INNER JOIN splits s2 ON s.kind != s2.kind AND s.tid = s2.tid",
                         "WHERE s.sid = ?)",
                         ";"
                         ]))
-                counterCheck <- query conn checkCounterQueryFmt (Only sid) :: IO [Only Int]
+                counterCheck <- query conn checkCounterQueryFmt [sid] :: IO [Only Int]
                 case (length counterCheck) of
                     1 -> do
-                        counterAids <- query conn getAccountAidQueryFmt (Only val) :: IO [Only Int]
+                        counterAids <- query conn getAccountAidQueryFmt [val] :: IO [Only Int]
                         case counterAids of
                             [Only counterAid] -> do
                                 execute conn updateCounterQueryFmt (counterAid, sid)
                             _ -> throw (SqlError "" NonfatalError (pack ("No account named " ++ val)) "" "")
-                    _ -> throw (SqlError "" NonfatalError (pack "Cannot update counter on split transactions.") "" "")
+                    _ -> throw (SqlError "" NonfatalError (pack "Cannot update counter on irregular transactions.") "" "")
             | lens == stmtAmountAlens -> do
                 let checkCounterQueryFmt = (Query (intercalate "\n" [
                         "SELECT s2.sid FROM splits s",
-                        "LEFT JOIN transactions t ON s.sid = t.tid",
-                        "LEFT JOIN splits s2 ON s.kind != s2.kind AND s.tid = s2.tid",
+                        "INNER JOIN transactions t ON s.tid = t.tid",
+                        "INNER JOIN splits s2 ON s.kind != s2.kind AND s.tid = s2.tid",
                         "WHERE s.sid = ?",
                         ";"
                         ]))
@@ -244,16 +244,16 @@ instance IOSelector (ScopedIOSelector CashScope) StatementRow where
                         "WHERE tid IN (SELECT tid FROM splits WHERE sid=?)",
                         ";"
                         ]))
-                counterCheck <- query conn checkCounterQueryFmt (Only sid) :: IO [Only Int]
+                counterCheck <- query conn checkCounterQueryFmt [sid] :: IO [Only Int]
                 case (length counterCheck) of
                     1 -> do
                         case (readMaybe val :: Maybe Scientific) of
                             Nothing -> throw (SqlError "" NonfatalError (pack ("cannot read " ++ val)) "" "")
                             Just readVal -> do
                                 execute conn updateAmountQueryFmt (readVal, sid)
-                    _ -> throw (SqlError "" NonfatalError (pack "Cannot update amount on split transactions.") "" "")
+                    _ -> throw (SqlError "" NonfatalError (pack "Cannot update amount on irregular transactions.") "" "")
             | otherwise -> throw (SqlError "" NonfatalError (pack "Cannot update field.") "" "")
-        res <- query conn statementSelectSingleQueryFmt (Only sid)
+        res <- query conn statementSelectSingleQueryFmt [sid]
         case res of
             [newRow] -> return newRow
             _ -> throw (SqlError "" FatalError (pack "Could not reselect row in statement update.") "" "")

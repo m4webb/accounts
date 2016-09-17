@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE ExistentialQuantification #-}
 
 module Main where
 
@@ -18,6 +19,7 @@ import TransactionSelector
 import SplitSelector
 import StatementSelector
 import Data.List.Zipper
+import Control.Lens.Tuple
 import Data.Scientific as Scientific
 import Control.Lens
 import Control.Monad.IO.Class (liftIO)
@@ -27,6 +29,7 @@ import Control.Exception (throwIO)
 import Filter
 import DrawingStuff
 import Data.Bool
+import Data.Maybe
 import Queries
 import SQLTypes
 
@@ -52,7 +55,7 @@ import SQLTypes
 
 -- TODO: include (uneditable) balance in AccountRow
 
--- TODO: left box color scrollbar indicator?
+-- DONE: left box color scrollbar indicator?
 
 -- TODO: Trigger for dates to be contained within year?
 
@@ -82,9 +85,13 @@ import SQLTypes
 
 -- DONE: fix alternate colors toggle problem
 
--- TODO: Keep place when switching between apps?
+-- DONE: Keep place when switching between apps?
 
--- TODO: Also highlight column name
+-- DONE: Also highlight column name
+
+-- TODO: Clean up main
+
+-- TODO: Remove duplicated code
 
 instance MonadThrow Curses where
     throwM e = Curses (throwIO e)
@@ -162,6 +169,26 @@ class App a where
     appHandleEvent :: a -> Event -> CursesInput -> Curses (Maybe a)
     appSelect :: a -> Curses a
 
+data AppWrap = forall a. (App a) => AppWrap a
+
+wrapApp :: App a => a -> AppWrap
+wrapApp = AppWrap
+
+instance App AppWrap where
+    appInitWindows (AppWrap a) = appInitWindows a
+
+    appDraw (AppWrap a) = appDraw a
+
+    appHandleEvent (AppWrap a) event input = do
+        maybeNewApp <- appHandleEvent a event input
+        case maybeNewApp of
+            Just newApp -> return (Just (AppWrap newApp))
+            Nothing -> return Nothing
+
+    appSelect (AppWrap a) = do
+        newApp <- appSelect a
+        return (AppWrap newApp)
+
 instance App CoreState where
     appInitWindows core = do
         max_y <- fmap (fromInteger . fst) screenSize
@@ -174,7 +201,8 @@ instance App CoreState where
         updateWindow statusWindow $ do
             erase
             max_x <- fmap (fromInteger . snd) windowSize
-            let msg = (show (core ^. coreBasicState)) ++ " " ++ (core ^. coreStatus)
+            --let msg = (show (core ^. coreBasicState)) ++ " " ++ (core ^. coreStatus)
+            let msg = core ^. coreStatus
             drawStringPos (clipString (max_x-1) msg) 0 2
         updateWindow inputWindow $ do -- this is cheating?
             erase
@@ -319,7 +347,7 @@ i1HandleEvent a event input = do
         EventCharacter 'g' -> liftIO $ fmap Just (i1_start a)
         EventCharacter 'G' -> liftIO $ fmap Just (i1_end a)
         --EventCharacter 's' -> liftIO $ fmap Just (i1_select a)
-        EventCharacter 'i' -> liftIO $ fmap Just (i1_insert a)
+        EventCharacter 'i' -> confirmCommand (input "Insert?") (liftIO $ fmap Just (i1_insert a)) (return (Just a))
         EventCharacter 'u' -> do
             maybeUpdateStr <- input "New value?"
             case maybeUpdateStr of
@@ -345,11 +373,12 @@ pairChangeChildScope pair = do
     let newPair = pair & pairChild .~ newPairChild2
     return newPair
 
-data BigState a = BigState {
+data BigState = BigState {
     _coreApp :: CoreState,
     _coreWindows :: Windows,
-    _mainApp :: a,
-    _mainWindows :: Windows
+    _mainAppList :: [AppWrap],
+    _mainAppIx :: Int,
+    _mainWindowsList :: [Windows]
     }
 
 makeLenses ''BigState
@@ -386,9 +415,12 @@ handleSqlErrorState state error = do
 specialCheckQuery = Query "SELECT s FROM (SELECT SUM(AMOUNT * CASE WHEN kind = 'credit' THEN -1 ELSE 1 END) AS s FROM splits \
                           \GROUP BY tid) a WHERE s != 0;"
 
+getMainApp state = fromJust (state ^. mainAppList ^? ix (state ^. mainAppIx))
+
 commitState state = do
     let core = state ^. coreApp
     let conn = core ^. coreConnection
+    let i = state ^. mainAppIx
     catch (do
                 specialCheckRes <- liftIO $ query_ conn specialCheckQuery :: Curses [Only Scientific]
                 case specialCheckRes of
@@ -397,7 +429,7 @@ commitState state = do
                             liftIO $ begin conn
                             let newState1 = state & coreApp . coreBasicState .~ BasicStateNormal
                             let newState2 = newState1 & coreApp . coreStatus .~ "Commit."
-                            newState3 <- newState2 & mainApp %%~ appSelect
+                            newState3 <- newState2 & mainAppList . ix i %%~ appSelect
                             return newState3
                     _ -> do
                             let newState1 = state & coreApp . coreBasicState .~ BasicStateNormal
@@ -421,28 +453,33 @@ main = do
         colorGreenID <- newColorID ColorGreen ColorDefault 6
         let colors = Colors colorRedID colorYellowID colorBlueID colorWhiteID colorGreenID
         let coreApp_ = CoreState conn colors "" BasicStateSelect
-        let mainApp_ = accountStatementProj conn
+        let mainApp0_ = accountStatementProj conn
+        let mainApp1_ = transactionSplitProj conn
+        let mainApp2_ = cashStatementProj conn
         coreWindows_ <- appInitWindows coreApp_
-        mainWindows_ <- appInitWindows mainApp_
-        let bigState = BigState coreApp_ coreWindows_ mainApp_ mainWindows_
+        mainWindows0_ <- appInitWindows mainApp0_
+        mainWindows1_ <- appInitWindows mainApp1_
+        mainWindows2_ <- appInitWindows mainApp2_
+        let mainAppList_ = [wrapApp mainApp0_, wrapApp mainApp1_, wrapApp mainApp2_]
+        let mainWindowsList = [mainWindows0_, mainWindows1_, mainWindows2_]
+        let bigState = BigState coreApp_ coreWindows_ mainAppList_ 0 mainWindowsList
         liftIO $ begin conn
         mainLoop bigState
 
-changeMainApp :: (App a, App b) => BigState a -> b -> Curses (BigState b)
-changeMainApp state newMainApp = do
-    foldl (>>) (return ()) (fmap closeWindow (state ^. mainWindows))
-    newMainWindows <- appInitWindows newMainApp
-    let newCoreApp = (state ^. coreApp) & coreBasicState .~ BasicStateSelect
-    return (BigState newCoreApp (state ^. coreWindows) newMainApp newMainWindows)
+stateEraseCurrentWindows state = do
+    foldl (>>) (return ()) (fmap (\w -> updateWindow w erase) (fromJust (state ^. mainWindowsList ^? ix (state ^. mainAppIx))))
 
-mainLoop :: App a => BigState a -> Curses ()
+mainLoop :: BigState -> Curses ()
 mainLoop state = do
     let core = state ^. coreApp
+    let i = state ^. mainAppIx
     case (core ^. coreBasicState) of
         BasicStateSelect -> do
             let newState1 = state & coreApp . coreBasicState .~ BasicStateNormal
             let newState2 = newState1 & coreApp . coreStatus .~ "Select."
-            newState3 <- newState2 & mainApp %%~ appSelect
+            newState3 <- newState2 & mainAppList . ix i %%~ appSelect
+            --newState4 <- newState3 & mainAppList . ix 1 %%~ appSelect
+            --newState5 <- newState4 & mainAppList . ix 2 %%~ appSelect
             mainLoop newState3
         BasicStateCommit -> do
             newState <- commitState state
@@ -452,17 +489,30 @@ mainLoop state = do
             liftIO $ begin (core ^. coreConnection)
             let newState1 = state & coreApp . coreBasicState .~ BasicStateNormal
             let newState2 = newState1 & coreApp . coreStatus .~ "Rollback."
-            newState3 <- newState2 & mainApp %%~ appSelect
+            newState3 <- newState2 & mainAppList . ix i %%~ appSelect
+            --newState4 <- newState3 & mainAppList . ix 1 %%~ appSelect
+            --newState5 <- newState4 & mainAppList . ix 2 %%~ appSelect
             mainLoop newState3
         BasicStateNormal -> do
             appDraw (state ^. coreApp) (state ^. coreWindows) (core ^. coreColors)
-            appDraw (state ^. mainApp) (state ^. mainWindows) (core ^. coreColors)
+            let mainApp = fromJust $ state ^. mainAppList ^? ix i
+            let mainWindows = fromJust $ state ^. mainWindowsList ^? ix i
+            appDraw mainApp mainWindows (core ^. coreColors)
             render
             event <- getEvent (head $ state ^. coreWindows) Nothing
             case event of
-                Just (EventCharacter '1') -> (changeMainApp state (accountStatementProj (core ^. coreConnection))) >>= mainLoop
-                Just (EventCharacter '2') -> (changeMainApp state (transactionSplitProj (core ^. coreConnection))) >>= mainLoop
-                Just (EventCharacter '3') -> (changeMainApp state (cashStatementProj (core ^. coreConnection))) >>= mainLoop
+                Just (EventCharacter '1') -> do
+                    stateEraseCurrentWindows state
+                    let newState = state & coreApp . coreBasicState .~ BasicStateSelect
+                    mainLoop (newState & mainAppIx .~ 0)
+                Just (EventCharacter '2') -> do
+                    stateEraseCurrentWindows state
+                    let newState = state & coreApp . coreBasicState .~ BasicStateSelect
+                    mainLoop (newState & mainAppIx .~ 1)
+                Just (EventCharacter '3') -> do
+                    stateEraseCurrentWindows state
+                    let newState = state & coreApp . coreBasicState .~ BasicStateSelect
+                    mainLoop (newState & mainAppIx .~ 2)
                 Nothing -> mainLoop state
                 Just event -> do
                     let input = getString (head $ state ^. coreWindows) 0 2
@@ -472,15 +522,17 @@ mainLoop state = do
                         Nothing -> do
                             let blankState = state & coreApp . coreStatus .~ ""
                             newState <- catch
-                                (do maybeNewMainApp <- appHandleEvent (blankState ^. mainApp) event input
+                                (do maybeNewMainApp <- appHandleEvent (getMainApp blankState) event input
                                     case maybeNewMainApp of
-                                        Just newMainApp -> return (blankState & mainApp .~ newMainApp)
+                                        Just newMainApp -> return (blankState & mainAppList . ix i .~ (wrapApp newMainApp))
                                         Nothing -> return state)
                                 (\e -> handleSqlErrorState state e)
                             mainLoop newState
         BasicStateError -> do
             appDraw (state ^. coreApp) (state ^. coreWindows) (core ^. coreColors)
-            appDraw (state ^. mainApp) (state ^. mainWindows) (core ^. coreColors)
+            let mainApp = fromJust $ state ^. mainAppList ^? ix i
+            let mainWindows = fromJust $ state ^. mainWindowsList ^? ix i
+            appDraw mainApp mainWindows (core ^. coreColors)
             render
             event <- getEvent (head $ state ^. coreWindows) Nothing
             case event of

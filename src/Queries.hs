@@ -26,7 +26,7 @@ statementSelectQueryFmt = Query "\n\
 \        t.date AS date,\n\
 \        s.kind AS kind,\n\
 \        s.amount AS amount,\n\
-\        STRING_AGG(DISTINCT a2.name, ',') AS counter,\n\
+\        COALESCE(STRING_AGG(DISTINCT a2.name, ','), '') AS counter,\n\
 \        t.description AS description\n\
 \    FROM splits s\n\
 \        LEFT JOIN accounts a ON s.aid = a.aid\n\
@@ -65,6 +65,7 @@ statementSelectQueryFmt = Query "\n\
 \    a.description\n\
 \ORDER BY\n\
 \    a.date DESC,\n\
+\    a.amount DESC,\n\
 \    a.sid DESC\n\
 \;"
 
@@ -90,7 +91,7 @@ statementSelectSingleQueryFmt = Query "\n\
 \        t.date AS date,\n\
 \        s.kind AS kind,\n\
 \        s.amount AS amount,\n\
-\        STRING_AGG(DISTINCT a2.name, ',') AS counter,\n\
+\        COALESCE(STRING_AGG(DISTINCT a2.name, ','), '') AS counter,\n\
 \        t.description AS description\n\
 \    FROM splits s\n\
 \        LEFT JOIN accounts a ON s.aid = a.aid\n\
@@ -127,6 +128,7 @@ statementSelectSingleQueryFmt = Query "\n\
 \    a.description\n\
 \ORDER BY\n\
 \    a.date DESC,\n\
+\    a.amount DESC,\n\
 \    a.sid DESC\n\
 \;"
 
@@ -152,7 +154,7 @@ statementSelectCashQueryFmt = Query "\n\
 \        t.date AS date,\n\
 \        s.kind AS kind,\n\
 \        s.amount AS amount,\n\
-\        STRING_AGG(DISTINCT a2.name, ',') AS counter,\n\
+\        COALESCE(STRING_AGG(DISTINCT a2.name, ','), '') AS counter,\n\
 \        t.description AS description\n\
 \    FROM splits s\n\
 \        LEFT JOIN accounts a ON s.aid = a.aid\n\
@@ -195,5 +197,6 @@ statementSelectCashQueryFmt = Query "\n\
 \    a.description\n\
 \ORDER BY\n\
 \    a.date DESC,\n\
+\    a.amount DESC,\n\
 \    a.sid DESC\n\
 \;"
