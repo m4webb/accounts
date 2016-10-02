@@ -16,7 +16,6 @@ import Database.PostgreSQL.Simple.Types
 import Control.Lens
 import Control.Exception
 import Data.Scientific as Scientific
-import Filter
 import Text.Read
 import Queries
 import SQLTypes
@@ -42,7 +41,7 @@ instance Eq StatementRow where
 instance FromRow StatementRow where
    fromRow = StatementRow <$> field <*> field <*> field <*> field <*> field <*> field <*> field
 
--- ScopedIOSelector
+-- ScopedSelector
 
 data StatementScope = StatementScope {
     _statementScopeAid :: Int,
@@ -60,7 +59,10 @@ data CashScope = CashScope {
 
 makeLenses ''CashScope
 
-instance IOSelector (ScopedIOSelector StatementScope) StatementRow where
+instance StringSettable CashScope where
+    setWithString s (CashScope _ a b) = CashScope s a b
+
+instance Selector IO (ScopedSelector StatementScope) StatementRow where
     iosSelect scoped = do
         let maybeScope = scoped ^. scopedMaybeScope
         case maybeScope of
@@ -160,7 +162,7 @@ instance IOSelector (ScopedIOSelector StatementScope) StatementRow where
 
     iosDelete scoped row = throw (SqlError "" NonfatalError (pack "Cannot delete from statements.") "" "")
 
-instance IOSelector (ScopedIOSelector CashScope) StatementRow where
+instance Selector IO (ScopedSelector CashScope) StatementRow where
     iosSelect scoped = do
         let maybeScope = scoped ^. scopedMaybeScope
         case maybeScope of
@@ -176,6 +178,10 @@ instance IOSelector (ScopedIOSelector CashScope) StatementRow where
 
     iosUpdate scoped row lens val = do
         let conn = (scoped ^. scopedConnection)
+        let maybeScope = scoped ^. scopedMaybeScope
+        let description = case maybeScope of
+                Just scope -> scope ^. cashScopeDescription
+                Nothing -> "%"
         let sid = row ^. statementSid
         if
             | lens == stmtDateAlens -> do
@@ -253,7 +259,7 @@ instance IOSelector (ScopedIOSelector CashScope) StatementRow where
                                 execute conn updateAmountQueryFmt (readVal, sid)
                     _ -> throw (SqlError "" NonfatalError (pack "Cannot update amount on irregular transactions.") "" "")
             | otherwise -> throw (SqlError "" NonfatalError (pack "Cannot update field.") "" "")
-        res <- query conn statementSelectSingleQueryFmt [sid]
+        res <- query conn statementSelectSingleCashQueryFmt (sid, description)
         case res of
             [newRow] -> return newRow
             _ -> throw (SqlError "" FatalError (pack "Could not reselect row in statement update.") "" "")

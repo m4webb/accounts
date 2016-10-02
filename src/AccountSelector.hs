@@ -6,7 +6,6 @@
 module AccountSelector where
 
 import Accounts
-import Filter
 import Data.Maybe
 import Data.Bool
 --import Data.Scientific as Scientific
@@ -113,7 +112,7 @@ singleAccountQueryFmt = Query (intercalate "\n" [
         ";"
         ])
 
-instance IOSelector SimpleIOSelector AccountRow where
+instance Selector IO SimpleSelector AccountRow where
     iosSelect selector = query_ (selector ^. selectorConnection) (Query (intercalate "\n" [
         "SELECT a.aid, a.kind, a.name, a.description,",
         "TO_CHAR(COALESCE(SUM(s.amount * CASE WHEN s.kind = 'credit' THEN -1 ELSE 1 END), 0), 'MI99990.99')",

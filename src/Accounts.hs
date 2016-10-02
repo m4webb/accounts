@@ -6,7 +6,6 @@ module Accounts where
 import Database.PostgreSQL.Simple
 import Data.List.Zipper
 import Control.Lens
-import Filter
 
 -- Accounts core API
 
@@ -17,7 +16,6 @@ import Filter
 data AccLens row = AccLens {
     _alens_get :: row -> String,
     _alens_can_set :: Bool,
-    --_alens_set :: Maybe (row -> String -> row),
     _alens_name :: String
     }
 
@@ -27,32 +25,29 @@ instance Eq (AccLens row) where
     (==) a b = (a ^. alens_name) == (b ^. alens_name)
     (/=) a b = (a ^. alens_name) /= (b ^. alens_name)
 
-class IOSelector a row where
-    iosSelect :: a -> IO [row]
-    iosInsert :: a -> IO row
-    iosUpdate :: a -> row -> AccLens row -> String -> IO row
-    iosDelete :: a -> row -> IO ()
+class Selector m a row where
+    iosSelect :: a -> m [row]
+    iosInsert :: a -> m row
+    iosUpdate :: a -> row -> AccLens row -> String -> m row
+    iosDelete :: a -> row -> m ()
 
-class I1 a where 
-    i1_select :: a -> IO a
-    i1_insert :: a -> IO a
-    i1_update :: a -> String -> IO a
-    i1_delete :: a -> IO a
-    i1_set_filters :: a -> [Filter] -> IO a
-    i1_reset_filters :: a -> IO a
-    i1_up :: a -> IO a
-    i1_up_alot :: a -> IO a
-    i1_down :: a -> IO a
-    i1_down_alot :: a -> IO a
-    i1_start :: a -> IO a
-    i1_end :: a -> IO a
-    i1_left :: a -> IO a
-    i1_right :: a -> IO a
+class I1 m a where 
+    i1_select :: a -> m a
+    i1_insert :: a -> m a
+    i1_update :: a -> String -> m a
+    i1_delete :: a -> m a
+    i1_up :: a -> m a
+    i1_up_alot :: a -> m a
+    i1_down :: a -> m a
+    i1_down_alot :: a -> m a
+    i1_start :: a -> m a
+    i1_end :: a -> m a
+    i1_left :: a -> m a
+    i1_right :: a -> m a
 
 data LO1 row = LO1 {
     _lo1_zip_row :: Zipper row,
-    _lo1_zip_lens :: Zipper (AccLens row),
-    _lo1_zip_filters :: Zipper Filter
+    _lo1_zip_lens :: Zipper (AccLens row)
     }
 
 makeLenses ''LO1
@@ -60,25 +55,18 @@ makeLenses ''LO1
 class HasLO1 a where
     getLO1 :: a b -> LO1 b
 
---data IOSelector row = IOSelector {
---    _ios_select :: Connection -> [Filter] -> IO [row],
---    _ios_insert :: Connection -> IO row,
---    _ios_update :: Connection -> row -> IO row,
---    _ios_delete :: Connection -> row -> IO ()
---    }
-
-data SimpleIOSelector = SimpleIOSelector {
+data SimpleSelector = SimpleSelector {
     _selectorConnection :: Connection
     }
 
-makeLenses ''SimpleIOSelector
+makeLenses ''SimpleSelector
 
-data ScopedIOSelector a = ScopedIOSelector {
+data ScopedSelector a = ScopedSelector {
     _scopedConnection :: Connection,
     _scopedMaybeScope :: Maybe a
     }
 
-makeLenses ''ScopedIOSelector
+makeLenses ''ScopedSelector
 
 class Scopeable a b where
     getMaybeScope :: a -> Maybe b -> Maybe b

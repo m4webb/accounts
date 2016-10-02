@@ -17,7 +17,6 @@ import Database.PostgreSQL.Simple.Types
 import Control.Lens
 import Control.Exception
 import Data.Scientific as Scientific
-import Filter
 import Text.Read
 import SQLTypes
 
@@ -40,9 +39,9 @@ instance Eq SplitRow where
 instance FromRow SplitRow where
    fromRow = SplitRow <$> field <*> field <*> field <*> field <*> field <*> field
 
--- IOSelector
+-- Selector
 
-instance IOSelector SimpleIOSelector SplitRow where
+instance Selector IO SimpleSelector SplitRow where
     iosSelect selector = query_ (selector ^. selectorConnection) (Query (intercalate "\n" [
         "SELECT s.sid, s.tid, a.name, s.kind, TO_CHAR(s.amount, 'MI99990.00'), s.memo",
         "FROM splits s",
@@ -157,9 +156,9 @@ instance IOSelector SimpleIOSelector SplitRow where
         execute conn queryString (Only (row ^. splitSid))
         return ()
 
--- ScopedIOSelector
+-- ScopedSelector
 
-instance IOSelector (ScopedIOSelector Int) SplitRow where
+instance Selector IO (ScopedSelector Int) SplitRow where
     iosSelect scoped = do
         let maybeTid = scoped ^. scopedMaybeScope
         case maybeTid of

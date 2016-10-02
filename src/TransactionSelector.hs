@@ -6,7 +6,6 @@
 module TransactionSelector where
 
 import Accounts
-import Filter
 import Data.Maybe
 import Data.ByteString.Char8 hiding (head)
 import Database.PostgreSQL.Simple
@@ -34,9 +33,9 @@ instance Eq TransactionRow where
 instance FromRow TransactionRow where
    fromRow = TransactionRow <$> field <*> field <*> field
 
--- IOSelector
+-- Selector
 
-instance IOSelector SimpleIOSelector TransactionRow where
+instance Selector IO SimpleSelector TransactionRow where
     iosSelect selector = query_ (selector ^. selectorConnection) (Query (intercalate "\n" [
         "SELECT tid, date, description",
         "FROM transactions",
