@@ -4,17 +4,9 @@
 module DrawingStuff where
 
 import UI.NCurses
-import UI.NCurses.Types
-import Database.PostgreSQL.Simple
-import Projection
 import Accounts
 import Data.List.Zipper
 import Control.Lens
-import Control.Monad.IO.Class (liftIO)
-import Data.ByteString.Char8 (unpack)
-import Control.Monad.Catch
-import Control.Exception (throwIO)
-import Data.Bool
 import Data.List
 import Data.Maybe
 
@@ -46,7 +38,7 @@ getString w y x s = do
 getStringLoop w s y x = do
     render
     max_x <- updateWindow w (fmap (fromInteger . snd) windowSize)
-    ev <- getEvent w Nothing
+    ev <- catchCurses (getEvent w Nothing) (\e -> return Nothing)
     case ev of
         Just (EventSpecialKey KeyEnd) -> return Nothing
         Just (EventSpecialKey KeyBackspace) -> case s of

@@ -11,7 +11,6 @@ module Main where
 import UI.NCurses
 import UI.NCurses.Types
 import Database.PostgreSQL.Simple
-import Database.PostgreSQL.Simple.Transaction
 import Database.PostgreSQL.Simple.Types
 import Projection
 import Accounts
@@ -20,20 +19,20 @@ import TransactionSelector
 import SplitSelector
 import StatementSelector
 import Data.List.Zipper
-import Control.Lens.Tuple
 import Data.Scientific as Scientific
 import Control.Lens
 import Control.Monad.IO.Class (liftIO)
 import Data.ByteString.Char8 (unpack)
+import Data.ByteString.Char8 (pack)
+import Data.ByteString.Char8 (append)
 import Control.Monad.Catch
 import Control.Exception (throwIO)
 import DrawingStuff
-import Data.Bool
 import Data.Maybe
-import Queries
 import SQLTypes
+import AppTypes
 import Apps
-import States
+import System.Environment
 
 -- TODO: State monad
 
@@ -104,10 +103,10 @@ instance MonadCatch Curses where
     catch (Curses a) handler = Curses $ catch a (\e -> unCurses (handler e))
 
 instance Scopeable TransactionRow Int where
-    getMaybeScope row maybeScope = Just $ row ^. transactionTid
+    getMaybeScope row _ = Just $ row ^. transactionTid
 
 instance Scopeable AccountRow Int where
-    getMaybeScope row maybeScope = Just $ row ^. account_aid
+    getMaybeScope row _ = Just $ row ^. account_aid
 
 instance Scopeable AccountRow StatementScope where
     getMaybeScope row maybeScope = case maybeScope of
@@ -176,7 +175,11 @@ stateEraseCurrentWindows state = do
 
 main :: IO ()
 main = do
-    conn <- connectPostgreSQL "dbname='accounts' user='matthew' password='matthew'"
+    args <- getArgs
+    let yearStr = case args of
+            (year:args2) -> year
+            [] -> "2017"
+    conn <- connectPostgreSQL $ "dbname='accounts" `append` (pack yearStr) `append` "' user='matthew' password='matthew'"
     runCurses $ do
         setEcho False
         setCursorMode CursorInvisible
@@ -230,7 +233,7 @@ mainLoop state = do
             let mainWindows = fromJust $ state ^. mainWindowsList ^? ix i
             appDraw mainApp mainWindows (core ^. coreColors)
             render
-            event <- getEvent (head $ state ^. coreWindows) Nothing
+            event <- catchCurses (getEvent (head $ state ^. coreWindows) Nothing) (\e -> return Nothing)
             case event of
                 Just (EventCharacter '1') -> do
                     stateEraseCurrentWindows state
@@ -265,7 +268,7 @@ mainLoop state = do
             let mainWindows = fromJust $ state ^. mainWindowsList ^? ix i
             appDraw mainApp mainWindows (core ^. coreColors)
             render
-            event <- getEvent (head $ state ^. coreWindows) Nothing
+            event <- catchCurses (getEvent (head $ state ^. coreWindows) Nothing) (\e -> return Nothing)
             case event of
                 Just (EventCharacter 'r') -> mainLoop (state & coreApp . coreBasicState .~ BasicStateRollback)
                 _ -> mainLoop state

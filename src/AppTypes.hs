@@ -6,32 +6,12 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module States where
+module AppTypes where
 
 import UI.NCurses
-import UI.NCurses.Types
 import Database.PostgreSQL.Simple
-import Database.PostgreSQL.Simple.Transaction
-import Database.PostgreSQL.Simple.Types
-import Projection
-import Accounts
-import AccountSelector
-import TransactionSelector
-import SplitSelector
-import StatementSelector
-import Data.List.Zipper
-import Control.Lens.Tuple
-import Data.Scientific as Scientific
 import Control.Lens
-import Control.Monad.IO.Class (liftIO)
-import Data.ByteString.Char8 (unpack)
-import Control.Monad.Catch
-import Control.Exception (throwIO)
 import DrawingStuff
-import Data.Bool
-import Data.Maybe
-import Queries
-import SQLTypes
 
 type CursesInput = String -> Curses (Maybe String)
 

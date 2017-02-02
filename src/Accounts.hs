@@ -9,9 +9,9 @@ import Control.Lens
 
 -- Accounts core API
 
--- Special relationship between AccLens and IOSelector in the alens_can_set field,
+-- Special relationship between AccLens and Selector in the alens_can_set field,
 -- because IOSelector cannot communicate through lo1. An AccLens needs to know if
--- it can be updated or not, though the IOSelector actually implements the update.
+-- it can be updated or not, though the Selector actually implements the update.
 
 data AccLens row = AccLens {
     _alens_get :: row -> String,
