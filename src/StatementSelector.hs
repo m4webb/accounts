@@ -64,21 +64,21 @@ instance StringSettable CashScope where
 
 instance Selector IO (ScopedSelector StatementScope) StatementRow where
     iosSelect scoped = do
-        let maybeScope = scoped ^. scopedMaybeScope
-        case maybeScope of
-            Just scope -> do
-                let aid = scope ^. statementScopeAid
-                let dateFrom = scope ^. statementScopeDateFrom
-                let dateTo = scope ^. statementScopeDateTo
-                let conn = scoped ^. scopedConnection
-                query conn statementSelectQueryFmt (aid, dateFrom, dateTo)
-            Nothing -> return []
+        let scope = scoped ^. scopedScope
+        let aid = scope ^. statementScopeAid
+        let dateFrom = scope ^. statementScopeDateFrom
+        let dateTo = scope ^. statementScopeDateTo
+        let conn = scoped ^. scopedConnection
+        query conn statementSelectQueryFmt (aid, dateFrom, dateTo, dateFrom, dateTo)
 
     iosInsert scoped = throw (SqlError "" NonfatalError (pack "Cannot insert into statements.") "" "")
 
     iosUpdate scoped row lens val = do
-        let conn = (scoped ^. scopedConnection)
         let sid = row ^. statementSid
+        let scope = scoped ^. scopedScope
+        let dateFrom = scope ^. statementScopeDateFrom
+        let dateTo = scope ^. statementScopeDateTo
+        let conn = scoped ^. scopedConnection
         if
             | lens == stmtDateAlens -> do
                 let queryFmt = (Query (intercalate "\n" [
@@ -155,7 +155,7 @@ instance Selector IO (ScopedSelector StatementScope) StatementRow where
                                 execute conn updateAmountQueryFmt (readVal, sid)
                     _ -> throw (SqlError "" NonfatalError (pack "Cannot update amount on irregular transactions.") "" "")
             | otherwise -> throw (SqlError "" NonfatalError (pack "Cannot update field.") "" "")
-        res <- query conn statementSelectSingleQueryFmt [sid]
+        res <- query conn statementSelectSingleQueryFmt (sid, dateFrom, dateTo)
         case res of
             [newRow] -> return newRow
             _ -> throw (SqlError "" FatalError (pack "Could not reselect row in statement update.") "" "")
@@ -164,24 +164,21 @@ instance Selector IO (ScopedSelector StatementScope) StatementRow where
 
 instance Selector IO (ScopedSelector CashScope) StatementRow where
     iosSelect scoped = do
-        let maybeScope = scoped ^. scopedMaybeScope
-        case maybeScope of
-            Just scope -> do
-                let description = scope ^. cashScopeDescription
-                let dateFrom = scope ^. cashScopeDateFrom
-                let dateTo = scope ^. cashScopeDateTo
-                let conn = scoped ^. scopedConnection
-                query conn statementSelectCashQueryFmt (description, dateFrom, dateTo, description)
-            Nothing -> return []
+        let scope = scoped ^. scopedScope
+        let description = scope ^. cashScopeDescription
+        let dateFrom = scope ^. cashScopeDateFrom
+        let dateTo = scope ^. cashScopeDateTo
+        let conn = scoped ^. scopedConnection
+        query conn statementSelectCashQueryFmt (description, dateFrom, dateTo, description, dateFrom, dateTo)
 
     iosInsert scoped = throw (SqlError "" NonfatalError (pack "Cannot insert into statements.") "" "")
 
     iosUpdate scoped row lens val = do
-        let conn = (scoped ^. scopedConnection)
-        let maybeScope = scoped ^. scopedMaybeScope
-        let description = case maybeScope of
-                Just scope -> scope ^. cashScopeDescription
-                Nothing -> "%"
+        let conn = scoped ^. scopedConnection
+        let scope = scoped ^. scopedScope
+        let description = scope ^. cashScopeDescription
+        let dateFrom = scope ^. cashScopeDateFrom
+        let dateTo = scope ^. cashScopeDateTo
         let sid = row ^. statementSid
         if
             | lens == stmtDateAlens -> do
@@ -259,7 +256,7 @@ instance Selector IO (ScopedSelector CashScope) StatementRow where
                                 execute conn updateAmountQueryFmt (readVal, sid)
                     _ -> throw (SqlError "" NonfatalError (pack "Cannot update amount on irregular transactions.") "" "")
             | otherwise -> throw (SqlError "" NonfatalError (pack "Cannot update field.") "" "")
-        res <- query conn statementSelectSingleCashQueryFmt (sid, description)
+        res <- query conn statementSelectSingleCashQueryFmt (sid, description, dateFrom, dateTo)
         case res of
             [newRow] -> return newRow
             _ -> throw (SqlError "" FatalError (pack "Could not reselect row in statement update.") "" "")

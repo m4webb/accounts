@@ -63,13 +63,13 @@ makeLenses ''SimpleSelector
 
 data ScopedSelector a = ScopedSelector {
     _scopedConnection :: Connection,
-    _scopedMaybeScope :: Maybe a
+    _scopedScope :: a
     }
 
 makeLenses ''ScopedSelector
 
 class Scopeable a b where
-    getMaybeScope :: a -> Maybe b -> Maybe b
+    getScope :: a -> b -> b
 
 class StringSettable a where
     setWithString :: String -> a -> a

@@ -54,6 +54,9 @@ statementSelectQueryFmt = Query "\n\
 \        FROM splits s\n\
 \            LEFT JOIN accounts a ON s.aid = a.aid\n\
 \            LEFT JOIN transactions t ON s.tid = t.tid\n\
+\        WHERE\n\
+\            t.date >= ?\n\
+\            AND t.date < ?\n\
 \        ) b ON a.date >= b.date AND a.aid = b.aid\n\
 \GROUP BY\n\
 \    a.sid,\n\
@@ -117,6 +120,9 @@ statementSelectSingleQueryFmt = Query "\n\
 \        FROM splits s\n\
 \            LEFT JOIN accounts a ON s.aid = a.aid\n\
 \            LEFT JOIN transactions t ON s.tid = t.tid\n\
+\        WHERE\n\
+\            t.date >= ?\n\
+\            AND t.date < ?\n\
 \        ) b ON a.date >= b.date AND a.aid = b.aid\n\
 \GROUP BY\n\
 \    a.sid,\n\
@@ -186,6 +192,8 @@ statementSelectCashQueryFmt = Query "\n\
 \        WHERE\n\
 \            a.name LIKE 'Cash%'\n\
 \            AND t.description LIKE ?\n\
+\            AND t.date >= ?\n\
+\            AND t.date < ?\n\
 \        ) b ON a.date >= b.date\n\
 \GROUP BY\n\
 \    a.sid,\n\
@@ -252,6 +260,8 @@ statementSelectSingleCashQueryFmt = Query "\n\
 \        WHERE\n\
 \            a.name LIKE 'Cash%'\n\
 \            AND t.description LIKE ?\n\
+\            AND t.date <= ?\n\
+\            AND t.date > ?\n\
 \        ) b ON a.date >= b.date\n\
 \GROUP BY\n\
 \    a.sid,\n\

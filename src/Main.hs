@@ -103,26 +103,24 @@ instance MonadCatch Curses where
     catch (Curses a) handler = Curses $ catch a (\e -> unCurses (handler e))
 
 instance Scopeable TransactionRow Int where
-    getMaybeScope row _ = Just $ row ^. transactionTid
+    getScope row _ = row ^. transactionTid
 
 instance Scopeable AccountRow Int where
-    getMaybeScope row _ = Just $ row ^. account_aid
+    getScope row _ = row ^. account_aid
 
 instance Scopeable AccountRow StatementScope where
-    getMaybeScope row maybeScope = case maybeScope of
-        Just scope -> Just (scope & statementScopeAid .~ (row ^. account_aid))
-        Nothing -> Just (StatementScope (row ^. account_aid) (DateKind "1900-01-01") (DateKind "2100-01-01"))
+    getScope row scope = scope & statementScopeAid .~ (row ^. account_aid)
 
 lO1FromAlenses alenses = LO1 (fromList []) (fromList alenses)
 
 accountProj conn = Projection (SimpleSelector conn) (lO1FromAlenses account_alenses)
 transactionProj conn = Projection  (SimpleSelector conn) (lO1FromAlenses transactionAlenses)
 splitProj conn = Projection (SimpleSelector conn) (lO1FromAlenses splitAlenses)
-splitScopedProj conn = Projection (ScopedSelector conn (Nothing::Maybe Int)) (lO1FromAlenses splitScopedAlenses)
+splitScopedProj conn = Projection (ScopedSelector conn (0::Int)) (lO1FromAlenses splitScopedAlenses)
 transactionSplitProj conn = ProjectionPair (transactionProj conn) (splitScopedProj conn) True 50 False
 --statementProjInitialScope = Just (StatementScope 2 (DateKind "2016-01-01") (DateKind "2017-01-01"))
-statementProjInitialScope = Nothing :: Maybe StatementScope
-cashStatementProjInitialScope = Just (CashScope "%" (DateKind "0100-01-01") (DateKind "3000-01-01"))
+statementProjInitialScope = StatementScope (0::Int) (DateKind "0001-01-01") (DateKind "9999-01-01") 
+cashStatementProjInitialScope = CashScope "%" (DateKind "0001-01-01") (DateKind "9999-01-01")
 cashStatementProj conn = Projection (ScopedSelector conn cashStatementProjInitialScope) (lO1FromAlenses statementAlenses)
 statementProj conn = Projection (ScopedSelector conn statementProjInitialScope) (lO1FromAlenses statementAlenses)
 accountStatementProj conn = ProjectionPair (accountProj conn) (statementProj conn) True 50 False
@@ -179,7 +177,7 @@ main = do
     let yearStr = case args of
             (year:args2) -> year
             [] -> "2017"
-    conn <- connectPostgreSQL $ "dbname='accounts" `append` (pack yearStr) `append` "' user='matthew' password='matthew'"
+    conn <- connectPostgreSQL $ "dbname='accounts" `append` (pack yearStr) `append` "' user='matthew' password='matthew' host='localhost'"
     runCurses $ do
         setEcho False
         setCursorMode CursorInvisible

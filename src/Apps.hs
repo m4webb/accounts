@@ -50,12 +50,12 @@ i1HandleEvent a event input = do
         _ -> return Nothing
 
 pairChangeChildScope pair = do
-    let currentMaybeScope = pair ^. pairChild ^. proj_ios ^. scopedMaybeScope
+    let currentScope = pair ^. pairChild ^. proj_ios ^. scopedScope
     let maybeParentRow = safeCursor ((getLO1 (pair ^. pairParent)) ^. lo1_zip_row)
-    let newMaybeScope = case maybeParentRow of
-            Just row -> getMaybeScope row currentMaybeScope
-            Nothing -> Nothing
-    let newPairChild1 = pair ^. pairChild & proj_ios . scopedMaybeScope .~ newMaybeScope
+    let newScope = case maybeParentRow of
+            Just row -> getScope row currentScope
+            Nothing -> currentScope 
+    let newPairChild1 = pair ^. pairChild & proj_ios . scopedScope .~ newScope
     newPairChild2 <- liftIO $ i1_select newPairChild1
     let newPair = pair & pairChild .~ newPairChild2
     return newPair
@@ -111,19 +111,16 @@ instance (Selector IO (ScopedSelector scopeType) row, Eq row, StringSettable sco
     appDraw proj (window:_) colors = drawLO1 window colors normalLO1Context (getLO1 proj)
 
     appHandleEvent proj event input = do
-         case event of
+        case event of
             EventCharacter 'z' -> do
-                let maybeScope = proj ^. proj_ios ^. scopedMaybeScope
-                case maybeScope of
-                    Just scope -> do
-                        maybeScopeInput <- input "Set scope?"
-                        case maybeScopeInput of
-                            Just scopeInput -> do
-                                let newScope = setWithString scopeInput scope
-                                let newProj = proj & proj_ios . scopedMaybeScope .~ Just newScope
-                                newProj2 <- appSelect newProj
-                                return $ Just (newProj2)
-                            Nothing -> return (Just proj)
+                let scope = proj ^. proj_ios ^. scopedScope
+                maybeScopeInput <- input "Set scope?"
+                case maybeScopeInput of
+                    Just scopeInput -> do
+                        let newScope = setWithString scopeInput scope
+                        let newProj = proj & proj_ios . scopedScope .~ newScope
+                        newProj2 <- appSelect newProj
+                        return $ Just (newProj2)
                     Nothing -> return (Just proj)
             _ -> do
                 maybeNewProj <- i1HandleEvent proj event input
@@ -181,10 +178,10 @@ instance (Selector IO ios1 row1, Selector IO (ScopedSelector scopeType) row2, Sc
     appSelect pair = do
         newPairParent <- liftIO $ i1_select (pair ^. pairParent)
         let newPair1 = pair & pairParent .~ newPairParent
-        let currentMaybeScope = newPair1 ^. pairChild ^. proj_ios ^. scopedMaybeScope
-        case currentMaybeScope of
-                Nothing -> pairChangeChildScope newPair1
-                Just _ -> do
-                    newPairChild <- liftIO $ i1_select (newPair1 ^. pairChild)
-                    let newPair2 = newPair1 & pairChild .~ newPairChild
-                    return newPair2
+        case pair ^. pairChildLocked of
+            True -> do
+                newPairChild <- liftIO $ i1_select (newPair1 ^. pairChild)
+                let newPair2 = newPair1 & pairChild .~ newPairChild
+                return newPair2
+            False -> do
+                pairChangeChildScope newPair1
