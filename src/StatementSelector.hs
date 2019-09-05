@@ -30,7 +30,9 @@ data StatementRow = StatementRow {
     _statementCounter :: String,
 --    _statementKind :: SplitKind,
     _statementAmount :: String,
-    _statementBalance :: String
+    _statementBalance :: String,
+    _statementDebitBalance :: String,
+    _statementCreditBalance :: String
     } deriving (Show)
 
 makeLenses ''StatementRow
@@ -39,7 +41,7 @@ instance Eq StatementRow where
     row1 == row2 = (row1 ^. statementSid) == (row2 ^. statementSid)
 
 instance FromRow StatementRow where
-   fromRow = StatementRow <$> field <*> field <*> field <*> field <*> field <*> field <*> field
+   fromRow = StatementRow <$> field <*> field <*> field <*> field <*> field <*> field <*> field <*> field <*> field
 
 -- ScopedSelector
 
@@ -281,7 +283,9 @@ statementAlenses = [
     stmtCounterAlens,
     --stmtKindAlens,
     stmtAmountAlens,
-    stmtBalanceAlens
+    stmtBalanceAlens,
+    stmtDebitBalanceAlens,
+    stmtCreditBalanceAlens
     ]
 
 stmtDateAlens = AccLens
@@ -325,3 +329,15 @@ stmtBalanceAlens = AccLens
 --    Nothing
     False
     "balance"
+
+stmtDebitBalanceAlens = AccLens
+    (\row -> row ^. statementDebitBalance)
+--    Nothing
+    False
+    "debits"
+
+stmtCreditBalanceAlens = AccLens
+    (\row -> row ^. statementCreditBalance)
+--    Nothing
+    False
+    "credits"
